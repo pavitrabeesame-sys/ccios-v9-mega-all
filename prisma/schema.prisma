@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id          String   @id @default(cuid())
+  name        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  code        String   @unique
+  description String?
+  brands      Brand[]
+  stores      Store[]
+  users       User[]
+}
+
+model Brand {
+  id          String    @id @default(cuid())
+  name        String
+  companyId   String
+  code        String    @unique
+  createdAt   DateTime  @default(now())
+  description String?
+  updatedAt   DateTime  @updatedAt
+  company     Company   @relation(fields: [companyId], references: [id])
+  products    Product[]
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String
+  code        String    @unique
+  description String?
+  image       String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
+}
+
+model Store {
+  id          String      @id @default(cuid())
+  name        String
+  companyId   String
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  marketplace Marketplace
+  orders      Order[]
+  company     Company     @relation(fields: [companyId], references: [id])
+}
+
+model Product {
+  id          String    @id @default(cuid())
+  sku         String    @unique
+  name        String
+  price       Float
+  stock       Int       @default(0)
+  brandId     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  barcode     String?   @unique
+  description String?
+  categoryId  String?
+  costPrice   Float     @default(0)
+  height      Float?
+  image       String?
+  length      Float?
+  maxStock    Int?
+  minStock    Int       @default(5)
+  status      String    @default("ACTIVE")
+  weight      Float?
+  width       Float?
+  brand       Brand     @relation(fields: [brandId], references: [id])
+  category    Category? @relation(fields: [categoryId], references: [id])
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  createdAt DateTime @default(now())
+  phone     String?
+}
+
+model Order {
+  id          String   @id @default(cuid())
+  orderNumber String   @unique
+  total       Float
+  status      String
+  storeId     String
+  createdAt   DateTime @default(now())
+  store       Store    @relation(fields: [storeId], references: [id])
+}
+
+model User {
+  id        String    @id @default(cuid())
+  name      String?
+  email     String    @unique
+  password  String
+  role      Role      @default(STAFF)
+  isActive  Boolean   @default(true)
+  lastLogin DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  companyId String?
+  company   Company?  @relation(fields: [companyId], references: [id])
+}
+
+model Review {
+  id           String       @id @default(cuid())
+  reviewId     String       @unique
+  marketplace  Marketplace
+  storeName    String
+  orderNumber  String?
+  productName  String
+  productSku   String?
+  customerName String
+  rating       Int
+  reviewText   String?
+  aiReply      String?
+  finalReply   String?
+  status       ReviewStatus @default(PENDING)
+  repliedAt    DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model ReplyTemplate {
+  id        String   @id @default(cuid())
+  brand     String
+  rating    Int
+  title     String
+  template  String
+  createdAt DateTime @default(now())
+}
+
+enum Role {
+  SUPER_ADMIN
+  COMPANY_ADMIN
+  OPERATIONS_MANAGER
+  MARKETING_MANAGER
+  INVENTORY_MANAGER
+  CUSTOMER_SERVICE
+  STAFF
+  VIEWER
+}
+
+enum Marketplace {
+  SHOPEE
+  LAZADA
+  TIKTOK
+  WEBSITE
+}
+
+enum ReviewStatus {
+  PENDING
+  GENERATED
+  APPROVED
+  REJECTED
+  REPLIED
+}
+
+model ShopeeAccount {
+  id           String   @id @default(cuid())
+
+  shopId       BigInt   @unique
+
+  accessToken  String
+  refreshToken String
+  expireIn     Int
+
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}
