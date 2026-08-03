@@ -1,5 +1,5 @@
 import { prisma } from "../../lib/prisma";
-import { getReviews } from "./ReviewService";
+import { syncAllShopReviews as getReviews } from './ReviewService'
 import { getValidToken } from "./TokenService";
 
 export async function syncShopeeReviews(shopId) {

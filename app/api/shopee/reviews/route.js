@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getReviews } from "../../../../src/services/shopee/ReviewService";
+import { getItemReviews as getReviews } from '../../../../src/services/shopee/ReviewService'
 
 export async function GET(request) {
 

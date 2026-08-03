@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAccessToken } from "../../../../src/services/shopee/TokenService";
+import { getToken as getAccessToken } from "../../../../src/services/shopee/TokenService";
 
 export async function POST(request) {
 
