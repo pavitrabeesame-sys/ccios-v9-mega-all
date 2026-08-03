@@ -15,6 +15,7 @@
     "bullmq": "^6.0.2",
     "destr": "^2.0.5",
     "dotenv": "^17.4.2",
+    "groq-sdk": "^1.5.0",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
     "next": "14.2.33",
