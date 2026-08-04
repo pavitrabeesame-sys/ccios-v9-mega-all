@@ -14,6 +14,28 @@ export default function ReviewsPage() {
     loadReviews,
   } = useReviews();
 
+  async function smartSync() {
+    try {
+      const res = await fetch("/api/reviews/smart-sync", {
+        method: "POST",
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Smart Sync Failed");
+        return;
+      }
+
+      alert("✅ Smart Review Sync Completed");
+
+      loadReviews();
+
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
   async function generateAll() {
     try {
       const res = await fetch("/api/reviews/generate-all", {
@@ -89,9 +111,16 @@ export default function ReviewsPage() {
           NOVA Review Center
         </h1>
 
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap">
 
           <ImportCSV onImported={loadReviews} />
+
+          <button
+            onClick={smartSync}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg"
+          >
+            ⚡ Smart Review Sync
+          </button>
 
           <button
             onClick={generateAll}
