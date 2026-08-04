@@ -3,17 +3,13 @@ import crypto from "crypto";
 const HOST =
   process.env.SHOPEE_HOST || "https://partner.shopeemobile.com";
 
-/**
- * Load Shopee configuration only when needed.
- * This prevents Next.js from failing during build.
- */
 function getConfig() {
   const partnerId = Number(process.env.SHOPEE_PARTNER_ID);
   const partnerKey = process.env.SHOPEE_PARTNER_KEY;
 
   if (!partnerId || !partnerKey) {
     throw new Error(
-      "Missing SHOPEE_PARTNER_ID or SHOPEE_PARTNER_KEY in .env"
+      "Missing SHOPEE_PARTNER_ID or SHOPEE_PARTNER_KEY"
     );
   }
 
@@ -27,9 +23,7 @@ function getTimestamp() {
   return Math.floor(Date.now() / 1000);
 }
 
-function sign(baseString) {
-  const { partnerKey } = getConfig();
-
+function sign(baseString, partnerKey) {
   return crypto
     .createHmac("sha256", partnerKey)
     .update(baseString)
@@ -39,31 +33,36 @@ function sign(baseString) {
 function buildUrl(path, params = {}) {
   const url = new URL(HOST + path);
 
-  Object.entries(params).forEach(([key, value]) => {
-    url.searchParams.set(key, String(value));
+  Object.entries(params).forEach(([k, v]) => {
+    url.searchParams.set(k, String(v));
   });
 
   return url.toString();
 }
 
-/**
- * Build Shopee Authorization URL
- */
+/* ============================================================
+   STEP 1
+   AUTHORIZE SHOP
+============================================================ */
+
 export function buildAuthUrl(redirectUrl) {
-  const { partnerId } = getConfig();
+  const { partnerId, partnerKey } = getConfig();
 
   const path = "/api/v2/shop/auth_partner";
-  const timestamp = Math.floor(Date.now() / 1000);
+  const timestamp = getTimestamp();
 
-  const base = `${partnerId}${path}${timestamp}`;
-  const signature = sign(base);
+  const baseString =
+    `${partnerId}${path}${timestamp}`;
 
+  const signature = sign(baseString, partnerKey);
+
+  console.log("========== AUTH ==========");
   console.log({
-    HOST,
     partnerId,
     timestamp,
-    base,
+    baseString,
     signature,
+    redirectUrl,
   });
 
   return buildUrl(path, {
@@ -74,20 +73,29 @@ export function buildAuthUrl(redirectUrl) {
   });
 }
 
-/**
- * Exchange authorization code for access token
- */
-export async function exchangeCodeForToken(code, shopId) {
-  const { partnerId } = getConfig();
+/* ============================================================
+   STEP 2
+   EXCHANGE CODE
+============================================================ */
 
-  if (!code || !shopId) {
-    throw new Error("code and shopId are required");
-  }
+export async function exchangeCodeForToken(code, shopId) {
+  const { partnerId, partnerKey } = getConfig();
+
+  if (!code)
+    throw new Error("Missing code");
+
+  if (!shopId)
+    throw new Error("Missing shop_id");
 
   const path = "/api/v2/auth/token/get";
+
   const timestamp = getTimestamp();
-  const base = `${partnerId}${path}${timestamp}${shopId}`;
-  const signature = sign(base);
+
+  const baseString =
+    `${partnerId}${path}${timestamp}${shopId}`;
+
+  const signature =
+    sign(baseString, partnerKey);
 
   const url = buildUrl(path, {
     partner_id: partnerId,
@@ -101,7 +109,11 @@ export async function exchangeCodeForToken(code, shopId) {
     shop_id: Number(shopId),
   };
 
-  console.log("[Shopee] Exchanging code:", { shopId, url });
+  console.log("========== TOKEN ==========");
+  console.log("URL:", url);
+  console.log("BODY:", body);
+  console.log("BASE:", baseString);
+  console.log("SIGN:", signature);
 
   const res = await fetch(url, {
     method: "POST",
@@ -113,37 +125,38 @@ export async function exchangeCodeForToken(code, shopId) {
 
   const data = await res.json();
 
-  if (data.error) {
-    console.error("[Shopee] Token Error:", data);
+  console.log("TOKEN RESPONSE:", data);
 
+  if (data.error) {
     throw new Error(
-      `Shopee Token Error: ${data.message || data.error}`
+      data.message || data.error
     );
   }
 
-  return {
-    access_token: data.access_token,
-    refresh_token: data.refresh_token,
-    expire_in: data.expire_in,
-    refresh_expire_in: data.refresh_token_expire_in,
-    shop_id: data.shop_id,
-  };
+  return data;
 }
 
-/**
- * Refresh access token
- */
-export async function refreshAccessToken(refreshToken, shopId) {
-  const { partnerId } = getConfig();
+/* ============================================================
+   STEP 3
+   REFRESH TOKEN
+============================================================ */
 
-  if (!refreshToken || !shopId) {
-    throw new Error("refreshToken and shopId are required");
-  }
+export async function refreshAccessToken(
+  refreshToken,
+  shopId
+) {
+  const { partnerId, partnerKey } = getConfig();
 
-  const path = "/api/v2/auth/access_token/get";
+  const path =
+    "/api/v2/auth/access_token/get";
+
   const timestamp = getTimestamp();
-  const base = `${partnerId}${path}${timestamp}${shopId}`;
-  const signature = sign(base);
+
+  const baseString =
+    `${partnerId}${path}${timestamp}${shopId}`;
+
+  const signature =
+    sign(baseString, partnerKey);
 
   const url = buildUrl(path, {
     partner_id: partnerId,
@@ -153,11 +166,15 @@ export async function refreshAccessToken(refreshToken, shopId) {
 
   const body = {
     partner_id: partnerId,
-    shop_id: Number(shopId),
     refresh_token: refreshToken,
+    shop_id: Number(shopId),
   };
 
-  console.log("[Shopee] Refreshing token:", { shopId });
+  console.log("========== REFRESH ==========");
+  console.log("URL:", url);
+  console.log("BODY:", body);
+  console.log("BASE:", baseString);
+  console.log("SIGN:", signature);
 
   const res = await fetch(url, {
     method: "POST",
@@ -169,22 +186,15 @@ export async function refreshAccessToken(refreshToken, shopId) {
 
   const data = await res.json();
 
-  if (data.error) {
-    console.error("[Shopee] Refresh Error:", data);
+  console.log("REFRESH RESPONSE:", data);
 
+  if (data.error) {
     throw new Error(
-      `Shopee Refresh Error: ${data.message || data.error}`
+      data.message || data.error
     );
   }
 
-  return {
-    access_token: data.access_token,
-    refresh_token: data.refresh_token,
-    expire_in: data.expire_in,
-    refresh_expire_in: data.refresh_token_expire_in,
-    shop_id: data.shop_id,
-  };
+  return data;
 }
 
-// Backward compatibility
 export const createAuthURL = buildAuthUrl;
