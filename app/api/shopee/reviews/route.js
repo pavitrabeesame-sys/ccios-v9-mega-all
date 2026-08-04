@@ -11,7 +11,14 @@ export async function GET() {
     const accounts = await prisma.shopeeAccount.findMany();
 
     console.log("========== SHOPEE ACCOUNTS ==========");
-    console.log(JSON.stringify(accounts, null, 2));
+    console.log(
+      JSON.stringify(
+        accounts,
+        (_, value) =>
+          typeof value === "bigint" ? value.toString() : value,
+        2
+      )
+    );
 
     if (accounts.length === 0) {
       return NextResponse.json({
@@ -23,25 +30,18 @@ export async function GET() {
     const results = [];
 
     for (const account of accounts) {
+      const shopId = account.shopId.toString();
 
       console.log("========== SHOP ==========");
       console.log({
-        shopId: account.shopId,
+        shopId,
         accessToken: account.accessToken ? "EXISTS" : "MISSING",
         refreshToken: account.refreshToken ? "EXISTS" : "MISSING",
       });
 
-      if (!account.shopId) {
-        results.push({
-          success: false,
-          error: "Missing shopId",
-        });
-        continue;
-      }
-
       if (!account.accessToken) {
         results.push({
-          shopId: account.shopId,
+          shopId,
           success: false,
           error: "Missing accessToken",
         });
@@ -51,25 +51,24 @@ export async function GET() {
       const url = buildShopApiUrl(
         "/api/v2/product/get_comment",
         account.accessToken,
-        account.shopId.toString(),
+        shopId,
         {
           cursor: "",
           page_size: 100,
         }
       );
 
-      console.log("REQUEST URL");
+      console.log("REQUEST URL:");
       console.log(url);
 
       const response = await fetch(url);
-
       const data = await response.json();
 
-      console.log("RESPONSE");
+      console.log("RESPONSE:");
       console.log(JSON.stringify(data, null, 2));
 
       results.push({
-        shopId: account.shopId,
+        shopId,
         data,
       });
     }
@@ -80,7 +79,6 @@ export async function GET() {
     });
 
   } catch (err) {
-
     console.error(err);
 
     return NextResponse.json(
