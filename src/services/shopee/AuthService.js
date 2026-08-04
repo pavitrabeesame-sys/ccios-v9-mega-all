@@ -1,11 +1,26 @@
 import crypto from "crypto";
 
-const HOST = process.env.SHOPEE_HOST || "https://partner.shopeemobile.com";
-const PARTNER_ID = Number(process.env.SHOPEE_PARTNER_ID);
-const PARTNER_KEY = process.env.SHOPEE_PARTNER_KEY;
+const HOST =
+  process.env.SHOPEE_HOST || "https://partner.shopeemobile.com";
 
-if (!PARTNER_ID ||!PARTNER_KEY) {
-  throw new Error("Missing SHOPEE_PARTNER_ID or SHOPEE_PARTNER_KEY in.env");
+/**
+ * Load Shopee configuration only when needed.
+ * This prevents Next.js from failing during build.
+ */
+function getConfig() {
+  const partnerId = Number(process.env.SHOPEE_PARTNER_ID);
+  const partnerKey = process.env.SHOPEE_PARTNER_KEY;
+
+  if (!partnerId || !partnerKey) {
+    throw new Error(
+      "Missing SHOPEE_PARTNER_ID or SHOPEE_PARTNER_KEY in .env"
+    );
+  }
+
+  return {
+    partnerId,
+    partnerKey,
+  };
 }
 
 function getTimestamp() {
@@ -13,31 +28,37 @@ function getTimestamp() {
 }
 
 function sign(baseString) {
+  const { partnerKey } = getConfig();
+
   return crypto
-   .createHmac("sha256", PARTNER_KEY)
-   .update(baseString)
-   .digest("hex");
+    .createHmac("sha256", partnerKey)
+    .update(baseString)
+    .digest("hex");
 }
 
 function buildUrl(path, params = {}) {
   const url = new URL(HOST + path);
+
   Object.entries(params).forEach(([key, value]) => {
     url.searchParams.set(key, String(value));
   });
+
   return url.toString();
 }
 
 /**
- * 1. Build Auth URL to redirect seller to authorize
+ * Build Shopee Authorization URL
  */
 export function buildAuthUrl(redirectUrl) {
+  const { partnerId } = getConfig();
+
   const path = "/api/v2/shop/auth_partner";
   const timestamp = getTimestamp();
-  const base = `${PARTNER_ID}${path}${timestamp}`;
+  const base = `${partnerId}${path}${timestamp}`;
   const signature = sign(base);
 
   return buildUrl(path, {
-    partner_id: PARTNER_ID,
+    partner_id: partnerId,
     timestamp,
     sign: signature,
     redirect: redirectUrl,
@@ -45,26 +66,29 @@ export function buildAuthUrl(redirectUrl) {
 }
 
 /**
- * 2. Exchange auth code for access_token + refresh_token
- * Note: Shopee V2 requires shop_id in base string for this endpoint
+ * Exchange authorization code for access token
  */
 export async function exchangeCodeForToken(code, shopId) {
-  if (!code ||!shopId) throw new Error("code and shopId are required");
+  const { partnerId } = getConfig();
+
+  if (!code || !shopId) {
+    throw new Error("code and shopId are required");
+  }
 
   const path = "/api/v2/auth/token/get";
   const timestamp = getTimestamp();
-  const base = `${PARTNER_ID}${path}${timestamp}${shopId}`; // shopId must be in base
+  const base = `${partnerId}${path}${timestamp}${shopId}`;
   const signature = sign(base);
 
   const url = buildUrl(path, {
-    partner_id: PARTNER_ID,
+    partner_id: partnerId,
     timestamp,
     sign: signature,
   });
 
   const body = {
     code,
-    partner_id: PARTNER_ID,
+    partner_id: partnerId,
     shop_id: Number(shopId),
   };
 
@@ -72,7 +96,9 @@ export async function exchangeCodeForToken(code, shopId) {
 
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify(body),
   });
 
@@ -80,7 +106,10 @@ export async function exchangeCodeForToken(code, shopId) {
 
   if (data.error) {
     console.error("[Shopee] Token Error:", data);
-    throw new Error(`Shopee Token Error: ${data.message || data.error}`);
+
+    throw new Error(
+      `Shopee Token Error: ${data.message || data.error}`
+    );
   }
 
   return {
@@ -93,25 +122,28 @@ export async function exchangeCodeForToken(code, shopId) {
 }
 
 /**
- * 3. Refresh access_token using refresh_token
- * Note: shop_id must also be in base string here
+ * Refresh access token
  */
 export async function refreshAccessToken(refreshToken, shopId) {
-  if (!refreshToken ||!shopId) throw new Error("refreshToken and shopId are required");
+  const { partnerId } = getConfig();
+
+  if (!refreshToken || !shopId) {
+    throw new Error("refreshToken and shopId are required");
+  }
 
   const path = "/api/v2/auth/access_token/get";
   const timestamp = getTimestamp();
-  const base = `${PARTNER_ID}${path}${timestamp}${shopId}`; // shopId must be in base
+  const base = `${partnerId}${path}${timestamp}${shopId}`;
   const signature = sign(base);
 
   const url = buildUrl(path, {
-    partner_id: PARTNER_ID,
+    partner_id: partnerId,
     timestamp,
     sign: signature,
   });
 
   const body = {
-    partner_id: PARTNER_ID,
+    partner_id: partnerId,
     shop_id: Number(shopId),
     refresh_token: refreshToken,
   };
@@ -120,7 +152,9 @@ export async function refreshAccessToken(refreshToken, shopId) {
 
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify(body),
   });
 
@@ -128,7 +162,10 @@ export async function refreshAccessToken(refreshToken, shopId) {
 
   if (data.error) {
     console.error("[Shopee] Refresh Error:", data);
-    throw new Error(`Shopee Refresh Error: ${data.message || data.error}`);
+
+    throw new Error(
+      `Shopee Refresh Error: ${data.message || data.error}`
+    );
   }
 
   return {
