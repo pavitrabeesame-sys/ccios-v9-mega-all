@@ -1,4 +1,3 @@
-import NextAuth from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaClient } from "@prisma/client";
 import { verifyPassword } from "./password";
@@ -6,6 +5,8 @@ import { verifyPassword } from "./password";
 const prisma = new PrismaClient();
 
 export const authOptions = {
+  secret: process.env.NEXTAUTH_SECRET,
+
   session: {
     strategy: "jwt",
   },
@@ -27,54 +28,91 @@ export const authOptions = {
       },
 
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          return null;
+        try {
+          console.log("=================================");
+          console.log("NEXTAUTH LOGIN ATTEMPT");
+          console.log("Email:", credentials?.email);
+          console.log("=================================");
+
+          if (!credentials?.email || !credentials?.password) {
+            console.log("Missing email or password");
+            return null;
+          }
+
+          const user = await prisma.user.findUnique({
+            where: {
+              email: credentials.email,
+            },
+          });
+
+          console.log("User exists:", !!user);
+
+          if (!user) {
+            console.log("User not found");
+            return null;
+          }
+
+          console.log("Checking password...");
+
+          const valid = await verifyPassword(
+            credentials.password,
+            user.password
+          );
+
+          console.log("Password valid:", valid);
+
+          if (!valid) {
+            console.log("Invalid password");
+            return null;
+          }
+
+          console.log("Login SUCCESS");
+
+          return {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+          };
+
+        } catch (err) {
+          console.error("AUTHORIZE ERROR");
+          console.error(err);
+          throw err;
         }
-
-        const user = await prisma.user.findUnique({
-          where: {
-            email: credentials.email,
-          },
-        });
-
-        if (!user) {
-          return null;
-        }
-
-        const valid = await verifyPassword(
-          credentials.password,
-          user.password
-        );
-
-        if (!valid) {
-          return null;
-        }
-
-        return {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-        };
       },
     }),
   ],
 
   callbacks: {
     async jwt({ token, user }) {
-      if (user) {
-        token.role = user.role;
-      }
+      try {
+        if (user) {
+          token.id = user.id;
+          token.role = user.role;
+        }
 
-      return token;
+        return token;
+      } catch (err) {
+        console.error("JWT CALLBACK ERROR");
+        console.error(err);
+        throw err;
+      }
     },
 
     async session({ session, token }) {
-      if (session.user) {
-        session.user.role = token.role;
-      }
+      try {
+        if (session.user) {
+          session.user.id = token.id;
+          session.user.role = token.role || "STAFF";
+        }
 
-      return session;
+        return session;
+      } catch (err) {
+        console.error("SESSION CALLBACK ERROR");
+        console.error(err);
+        throw err;
+      }
     },
   },
 
@@ -82,5 +120,5 @@ export const authOptions = {
     signIn: "/login",
   },
 
-  secret: process.env.NEXTAUTH_SECRET,
+  debug: true,
 };
