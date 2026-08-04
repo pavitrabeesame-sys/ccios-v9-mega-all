@@ -8,9 +8,7 @@ function getConfig() {
   const partnerKey = process.env.SHOPEE_PARTNER_KEY;
 
   if (!partnerId || !partnerKey) {
-    throw new Error(
-      "Missing SHOPEE_PARTNER_ID or SHOPEE_PARTNER_KEY"
-    );
+    throw new Error("Missing SHOPEE_PARTNER_ID or SHOPEE_PARTNER_KEY");
   }
 
   return {
@@ -34,23 +32,22 @@ function buildUrl(path, params = {}) {
   const url = new URL(HOST + path);
 
   Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null) {
-      url.searchParams.set(k, String(v));
-    }
+    url.searchParams.set(k, String(v));
   });
 
   return url.toString();
 }
 
-/* ============================================================
+/* ===========================================================
    STEP 1
-   AUTHORIZE SHOP
-============================================================ */
+   AUTHORIZE
+=========================================================== */
 
 export function buildAuthUrl(redirectUrl) {
   const { partnerId, partnerKey } = getConfig();
 
   const path = "/api/v2/shop/auth_partner";
+
   const timestamp = getTimestamp();
 
   const baseString =
@@ -58,16 +55,6 @@ export function buildAuthUrl(redirectUrl) {
 
   const signature =
     sign(baseString, partnerKey);
-
-  console.log("========== AUTH ==========");
-  console.log({
-    partnerId,
-    timestamp,
-    path,
-    baseString,
-    signature,
-    redirectUrl,
-  });
 
   return buildUrl(path, {
     partner_id: partnerId,
@@ -77,22 +64,15 @@ export function buildAuthUrl(redirectUrl) {
   });
 }
 
-/* ============================================================
+/* ===========================================================
    STEP 2
-   EXCHANGE CODE FOR TOKEN
-============================================================ */
+   GET ACCESS TOKEN
+=========================================================== */
 
-export async function exchangeCodeForToken(
-  code,
-  shopId
-) {
-  const { partnerId, partnerKey } = getConfig();
+export async function exchangeCodeForToken(code) {
 
-  if (!code)
-    throw new Error("Missing code");
-
-  if (!shopId)
-    throw new Error("Missing shop_id");
+  const { partnerId, partnerKey } =
+    getConfig();
 
   const path =
     "/api/v2/auth/token/get";
@@ -100,9 +80,8 @@ export async function exchangeCodeForToken(
   const timestamp =
     getTimestamp();
 
-  // Shopee requires shop_id here
   const baseString =
-    `${partnerId}${path}${timestamp}${shopId}`;
+    `${partnerId}${path}${timestamp}`;
 
   const signature =
     sign(baseString, partnerKey);
@@ -116,23 +95,16 @@ export async function exchangeCodeForToken(
   const body = {
     code,
     partner_id: partnerId,
-    shop_id: Number(shopId),
   };
 
   console.log("========== TOKEN ==========");
   console.log({
-    partnerId,
-    shopId,
+    url,
+    body,
     timestamp,
-    path,
     baseString,
     signature,
-    partnerKeyLength:
-      partnerKey.length,
   });
-
-  console.log("Request URL:", url);
-  console.log("Request Body:", body);
 
   const res = await fetch(url, {
     method: "POST",
@@ -145,10 +117,7 @@ export async function exchangeCodeForToken(
 
   const data = await res.json();
 
-  console.log(
-    "Shopee Response:",
-    JSON.stringify(data, null, 2)
-  );
+  console.log(data);
 
   if (data.error) {
     throw new Error(
@@ -159,15 +128,15 @@ export async function exchangeCodeForToken(
   return data;
 }
 
-/* ============================================================
+/* ===========================================================
    STEP 3
    REFRESH TOKEN
-============================================================ */
+=========================================================== */
 
 export async function refreshAccessToken(
-  refreshToken,
-  shopId
+  refreshToken
 ) {
+
   const { partnerId, partnerKey } =
     getConfig();
 
@@ -178,7 +147,7 @@ export async function refreshAccessToken(
     getTimestamp();
 
   const baseString =
-    `${partnerId}${path}${timestamp}${shopId}`;
+    `${partnerId}${path}${timestamp}`;
 
   const signature =
     sign(baseString, partnerKey);
@@ -192,23 +161,7 @@ export async function refreshAccessToken(
   const body = {
     partner_id: partnerId,
     refresh_token: refreshToken,
-    shop_id: Number(shopId),
   };
-
-  console.log("========== REFRESH ==========");
-  console.log({
-    partnerId,
-    shopId,
-    timestamp,
-    path,
-    baseString,
-    signature,
-    partnerKeyLength:
-      partnerKey.length,
-  });
-
-  console.log("Request URL:", url);
-  console.log("Request Body:", body);
 
   const res = await fetch(url, {
     method: "POST",
@@ -221,11 +174,6 @@ export async function refreshAccessToken(
 
   const data = await res.json();
 
-  console.log(
-    "Shopee Refresh Response:",
-    JSON.stringify(data, null, 2)
-  );
-
   if (data.error) {
     throw new Error(
       data.message || data.error
@@ -235,10 +183,9 @@ export async function refreshAccessToken(
   return data;
 }
 
-/* ============================================================
-   STEP 4
-   SHOP API HELPER
-============================================================ */
+/* ===========================================================
+   SHOP LEVEL API
+=========================================================== */
 
 export function buildShopApiUrl(
   path,
@@ -246,6 +193,7 @@ export function buildShopApiUrl(
   shopId,
   params = {}
 ) {
+
   const { partnerId, partnerKey } =
     getConfig();
 
