@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import generateReply from "@/src/ai/reply/generateReply";
+
+export const dynamic = "force-dynamic";
 
 const prisma = new PrismaClient();
 
 export async function POST() {
   try {
-
     const reviews = await prisma.review.findMany({
       where: {
         status: "PENDING",
@@ -19,57 +21,34 @@ export async function POST() {
 
     for (const review of reviews) {
 
-      const prompt = `
-You are a professional Shopee customer service agent.
-
-Customer Rating:
-${review.rating}/5
-
-Customer Review:
-${review.reviewText || "No review text"}
-
-Write a short, polite, professional reply.
-`;
-
-      const response = await fetch(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "llama-3.3-70b-versatile",
-            messages: [
-              {
-                role: "user",
-                content: prompt,
-              },
-            ],
-          }),
-        }
-      );
-
-      const ai = await response.json();
-
-      const reply =
-        ai.choices?.[0]?.message?.content ||
-        "Thank you for your support.";
+      const ai = await generateReply({
+        reviewText: review.reviewText || "",
+        rating: review.rating,
+        brand: review.brand || "Obermain",
+      });
 
       await prisma.review.update({
         where: {
           reviewId: review.reviewId,
         },
         data: {
-          aiReply: reply,
-          status: "GENERATED",
+          aiReply: ai.aiReply,
+          language: ai.language,
+          sentiment: ai.sentiment,
+          category: ai.category,
+          status:
+            ai.approval === "AUTO_APPROVED"
+              ? "APPROVED"
+              : "GENERATED",
         },
       });
 
       results.push({
         reviewId: review.reviewId,
-        rating: review.rating,
+        language: ai.language,
+        sentiment: ai.sentiment,
+        category: ai.category,
+        approval: ai.approval,
         success: true,
       });
     }
