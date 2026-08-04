@@ -64,6 +64,38 @@ export async function GET() {
       const response = await fetch(url);
       const data = await response.json();
 
+      if (data.response?.item_comment_list) {
+  for (const review of data.response.item_comment_list) {
+
+    await prisma.review.upsert({
+      where: {
+        reviewId: review.comment_id.toString(),
+      },
+      update: {
+        rating: review.rating_star,
+        reviewText: review.comment || "",
+        customerName: review.buyer_username,
+        orderNumber: review.order_sn,
+        productSku: review.item_id.toString(),
+        marketplace: "SHOPEE",
+        storeName: account.shopId.toString(),
+      },
+      create: {
+        reviewId: review.comment_id.toString(),
+        marketplace: "SHOPEE",
+        storeName: account.shopId.toString(),
+        orderNumber: review.order_sn,
+        productName: "",
+        productSku: review.item_id.toString(),
+        customerName: review.buyer_username,
+        rating: review.rating_star,
+        reviewText: review.comment || "",
+      },
+    });
+
+  }
+}
+
       console.log("RESPONSE:");
       console.log(JSON.stringify(data, null, 2));
 
