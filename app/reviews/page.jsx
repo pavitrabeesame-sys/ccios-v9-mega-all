@@ -7,7 +7,6 @@ import ReviewTable from "../../src/components/reviews/ReviewTable";
 import ImportCSV from "../../src/components/reviews/ImportCSV";
 
 export default function ReviewsPage() {
-
   const {
     reviews,
     stats,
@@ -16,64 +15,72 @@ export default function ReviewsPage() {
   } = useReviews();
 
   async function generateAll() {
+    try {
+      const res = await fetch("/api/reviews/generate-all", {
+        method: "POST",
+      });
 
-    const res = await fetch("/api/reviews/generate-all", {
-      method: "POST",
-    });
+      const data = await res.json();
 
-    const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Generate All Failed");
+        return;
+      }
 
-    if (!res.ok) {
-      alert(data.error || "Generate All Failed");
-      return;
+      alert(`✅ Generated ${data.total ?? data.generated} AI Replies`);
+
+      loadReviews();
+
+    } catch (err) {
+      alert(err.message);
     }
-
-    alert(`Generated ${data.generated} AI Replies`);
-
-    loadReviews();
-
   }
 
   async function approveAll() {
+    try {
+      const res = await fetch("/api/reviews/approve-all", {
+        method: "POST",
+      });
 
-    const res = await fetch("/api/reviews/approve-all", {
-      method: "POST",
-    });
+      const data = await res.json();
 
-    const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Approve All Failed");
+        return;
+      }
 
-    if (!res.ok) {
-      alert(data.error || "Approve All Failed");
-      return;
+      alert(`✅ Approved ${data.approved} Reviews`);
+
+      loadReviews();
+
+    } catch (err) {
+      alert(err.message);
     }
-
-    alert(`Approved ${data.approved} Reviews`);
-
-    loadReviews();
-
   }
 
   async function replyAll() {
+    try {
+      const res = await fetch("/api/reviews/reply-all", {
+        method: "POST",
+      });
 
-    const res = await fetch("/api/reviews/reply-all", {
-      method: "POST",
-    });
+      const data = await res.json();
 
-    const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Reply All Failed");
+        return;
+      }
 
-    if (!res.ok) {
-      alert(data.error || "Reply All Failed");
-      return;
+      alert(`🚀 Replied ${data.replied} Reviews`);
+
+      loadReviews();
+
+    } catch (err) {
+      alert(err.message);
     }
-
-    alert(`Replied ${data.replied} Reviews`);
-
-    loadReviews();
-
   }
 
   return (
-
     <div className="p-8">
 
       <div className="flex justify-between items-center mb-6">
@@ -108,7 +115,7 @@ export default function ReviewsPage() {
           </button>
 
           <button
-            onClick={() => loadReviews()}
+            onClick={loadReviews}
             className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg"
           >
             🔄 Refresh
@@ -123,22 +130,16 @@ export default function ReviewsPage() {
       <ReviewFilters onSearch={loadReviews} />
 
       {loading ? (
-
         <div className="bg-white rounded-xl shadow p-10 text-center text-gray-500">
           Loading Reviews...
         </div>
-
       ) : (
-
         <ReviewTable
           reviews={reviews}
           refresh={loadReviews}
         />
-
       )}
 
     </div>
-
   );
-
 }
