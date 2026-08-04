@@ -1,51 +1,54 @@
 import { NextResponse } from "next/server";
-import { getItemReviews as getReviews } from '../../../../src/services/shopee/ReviewService'
+import prisma from "@/src/lib/prisma";
+import { buildShopApiUrl } from "@/src/services/shopee/AuthService";
 
-export async function GET(request) {
+export const dynamic = "force-dynamic";
 
+export async function GET() {
   try {
+    const accounts = await prisma.shopeeAccount.findMany();
 
-    const { searchParams } = new URL(request.url);
+    const results = [];
 
-    const shopId = searchParams.get("shop_id");
-    const accessToken = searchParams.get("access_token");
-
-    if (!shopId || !accessToken) {
-
-      return NextResponse.json(
+    for (const account of accounts) {
+      const url = buildShopApiUrl(
+        "/api/v2/product/get_comment",
+        account.accessToken,
+        account.shopId,
         {
-          success: false,
-          error: "shop_id and access_token are required.",
-        },
-        {
-          status: 400,
+          cursor: "",
+          page_size: 100,
         }
       );
 
-    }
+      console.log("Fetching:", account.shopId);
 
-    const reviews = await getReviews(
-      shopId,
-      accessToken
-    );
+      const res = await fetch(url);
+
+      const data = await res.json();
+
+      results.push({
+        shopId: account.shopId,
+        response: data,
+      });
+    }
 
     return NextResponse.json({
       success: true,
-      reviews,
+      results,
     });
 
-  } catch (error) {
+  } catch (err) {
+    console.error(err);
 
     return NextResponse.json(
       {
         success: false,
-        error: error.message,
+        error: err.message,
       },
       {
         status: 500,
       }
     );
-
   }
-
 }
