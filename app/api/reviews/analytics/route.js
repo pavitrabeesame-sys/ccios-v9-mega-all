@@ -10,6 +10,9 @@ export async function GET() {
     rejected,
     replied,
     generated,
+    positive,
+    neutral,
+    negative,
   ] = await Promise.all([
 
     prisma.review.count(),
@@ -34,6 +37,18 @@ export async function GET() {
       where: { status: "GENERATED" },
     }),
 
+    prisma.review.count({
+      where: { sentiment: "POSITIVE" },
+    }),
+
+    prisma.review.count({
+      where: { sentiment: "NEUTRAL" },
+    }),
+
+    prisma.review.count({
+      where: { sentiment: "NEGATIVE" },
+    }),
+
   ]);
 
   return NextResponse.json({
@@ -43,6 +58,9 @@ export async function GET() {
     rejected,
     replied,
     generated,
+    positive,
+    neutral,
+    negative,
   });
 
 }
