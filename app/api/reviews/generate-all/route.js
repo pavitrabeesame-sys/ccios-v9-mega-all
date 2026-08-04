@@ -1,75 +1,97 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../../src/lib/prisma";
-import { generateReply } from "../../../../src/services/reviews/AIReplyService";
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
 
 export async function POST() {
-
   try {
-
-    console.log("========== GENERATE ALL ==========");
 
     const reviews = await prisma.review.findMany({
       where: {
-        aiReply: "",
+        status: "PENDING",
       },
       orderBy: {
         createdAt: "asc",
       },
     });
 
-    console.log(`Found ${reviews.length} reviews`);
-
-    let generated = 0;
+    const results = [];
 
     for (const review of reviews) {
 
-      try {
+      const prompt = `
+You are a professional Shopee customer service agent.
 
-        const aiReply = await generateReply(review);
+Customer Rating:
+${review.rating}/5
 
-        await prisma.review.update({
-          where: {
-            id: review.id,
+Customer Review:
+${review.reviewText || "No review text"}
+
+Write a short, polite, professional reply.
+`;
+
+      const response = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+            "Content-Type": "application/json",
           },
-          data: {
-            aiReply,
-            status: "GENERATED",
-          },
-        });
+          body: JSON.stringify({
+            model: "llama-3.3-70b-versatile",
+            messages: [
+              {
+                role: "user",
+                content: prompt,
+              },
+            ],
+          }),
+        }
+      );
 
-        generated++;
+      const ai = await response.json();
 
-        console.log(`✓ ${review.customerName}`);
+      const reply =
+        ai.choices?.[0]?.message?.content ||
+        "Thank you for your support.";
 
-      } catch (err) {
+      await prisma.review.update({
+        where: {
+          reviewId: review.reviewId,
+        },
+        data: {
+          aiReply: reply,
+          status: "GENERATED",
+        },
+      });
 
-        console.error(`✗ ${review.customerName}`);
-        console.error(err);
-
-      }
-
+      results.push({
+        reviewId: review.reviewId,
+        rating: review.rating,
+        success: true,
+      });
     }
 
     return NextResponse.json({
       success: true,
-      total: reviews.length,
-      generated,
+      total: results.length,
+      results,
     });
 
-  } catch (error) {
+  } catch (err) {
 
-    console.error(error);
+    console.error(err);
 
     return NextResponse.json(
       {
         success: false,
-        error: error.message,
+        error: err.message,
       },
       {
         status: 500,
       }
     );
-
   }
-
 }
