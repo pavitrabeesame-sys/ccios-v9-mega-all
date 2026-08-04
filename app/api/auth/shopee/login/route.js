@@ -6,22 +6,27 @@ export async function GET() {
     const redirectUrl =
       `${process.env.NEXTAUTH_URL}/api/auth/shopee/callback`;
 
-    const authUrl = buildAuthUrl(redirectUrl);
+    export function buildAuthUrl(redirectUrl) {
+  const { partnerId } = getConfig();
 
-    return NextResponse.redirect(authUrl);
+  const path = "/api/v2/shop/auth_partner";
+  const timestamp = Math.floor(Date.now() / 1000);
 
-  } catch (error) {
+  const base = `${partnerId}${path}${timestamp}`;
+  const signature = sign(base);
 
-    console.error(error);
+  console.log("========== SHOPEE AUTH ==========");
+  console.log("HOST:", HOST);
+  console.log("Partner ID:", partnerId);
+  console.log("Timestamp:", timestamp);
+  console.log("Base:", base);
+  console.log("Signature:", signature);
+  console.log("Redirect:", redirectUrl);
 
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message,
-      },
-      {
-        status: 500,
-      }
-    );
-  }
+  return buildUrl(path, {
+    partner_id: partnerId,
+    timestamp,
+    sign: signature,
+    redirect: redirectUrl,
+  });
 }

@@ -53,9 +53,18 @@ export function buildAuthUrl(redirectUrl) {
   const { partnerId } = getConfig();
 
   const path = "/api/v2/shop/auth_partner";
-  const timestamp = getTimestamp();
+  const timestamp = Math.floor(Date.now() / 1000);
+
   const base = `${partnerId}${path}${timestamp}`;
   const signature = sign(base);
+
+  console.log({
+    HOST,
+    partnerId,
+    timestamp,
+    base,
+    signature,
+  });
 
   return buildUrl(path, {
     partner_id: partnerId,
