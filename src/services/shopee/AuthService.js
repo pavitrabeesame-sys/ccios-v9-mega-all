@@ -5,7 +5,6 @@ const HOST = process.env.SHOPEE_HOST || "https://partner.shopeemobile.com";
 function getConfig() {
   const partnerId = Number(process.env.SHOPEE_PARTNER_ID);
   const partnerKey = process.env.SHOPEE_PARTNER_KEY;
-
   if (!partnerId || !partnerKey) {
     throw new Error("Missing SHOPEE_PARTNER_ID or SHOPEE_PARTNER_KEY");
   }
@@ -23,7 +22,9 @@ function sign(baseString: string, partnerKey: string) {
 function buildUrl(path: string, params: Record<string, any> = {}) {
   const url = new URL(HOST + path);
   Object.entries(params).forEach(([k, v]) => {
-    url.searchParams.set(k, String(v));
+    if (v !== undefined && v !== null && v !== "") { // skip empty
+      url.searchParams.set(k, String(v));
+    }
   });
   return url.toString();
 }
@@ -35,12 +36,7 @@ export function buildAuthUrl(redirectUrl: string) {
   const timestamp = getTimestamp();
   const baseString = `${partnerId}${path}${timestamp}`;
   const signature = sign(baseString, partnerKey);
-  return buildUrl(path, {
-    partner_id: partnerId,
-    timestamp,
-    sign: signature,
-    redirect: redirectUrl,
-  });
+  return buildUrl(path, { partner_id: partnerId, timestamp, sign: signature, redirect: redirectUrl });
 }
 
 /* STEP 2: EXCHANGE CODE */
@@ -79,7 +75,7 @@ export async function refreshAccessToken(refreshToken: string, shopId: number) {
   return data;
 }
 
-/* STEP 4: THIS WAS MISSING - FOR API CALLS */
+/* STEP 4: FOR v2.product.get_comment and all other shop APIs */
 export function buildShopApiUrl(
   path: string,
   accessToken: string,
@@ -88,6 +84,7 @@ export function buildShopApiUrl(
 ) {
   const { partnerId, partnerKey } = getConfig();
   const timestamp = getTimestamp();
+  // BaseString format for shop APIs: partnerId + path + timestamp + accessToken + shopId
   const baseString = `${partnerId}${path}${timestamp}${accessToken}${shopId}`;
   const signature = sign(baseString, partnerKey);
 
@@ -97,6 +94,6 @@ export function buildShopApiUrl(
     access_token: accessToken,
     shop_id: shopId,
     sign: signature,
-    ...params,
+    ...params, // cursor, page_size, item_id, comment_id etc
   });
 }
