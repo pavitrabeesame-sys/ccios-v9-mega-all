@@ -1,23 +1,22 @@
 {
   "compilerOptions": {
+    "target": "ES2017",
     "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": false,
     "noEmit": true,
-    "incremental": true,
-    "module": "esnext",
     "esModuleInterop": true,
-    "moduleResolution": "node",
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
-
+    "incremental": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]
     },
-
     "plugins": [
       {
         "name": "next"
@@ -33,6 +32,9 @@
     ".next/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+  "node_modules",
+  "src/commerce",
+  "src/intelligence",
+  "src/marketing"
   ]
 }
