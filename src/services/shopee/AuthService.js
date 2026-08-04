@@ -34,7 +34,9 @@ function buildUrl(path, params = {}) {
   const url = new URL(HOST + path);
 
   Object.entries(params).forEach(([k, v]) => {
-    url.searchParams.set(k, String(v));
+    if (v !== undefined && v !== null) {
+      url.searchParams.set(k, String(v));
+    }
   });
 
   return url.toString();
@@ -54,12 +56,14 @@ export function buildAuthUrl(redirectUrl) {
   const baseString =
     `${partnerId}${path}${timestamp}`;
 
-  const signature = sign(baseString, partnerKey);
+  const signature =
+    sign(baseString, partnerKey);
 
   console.log("========== AUTH ==========");
   console.log({
     partnerId,
     timestamp,
+    path,
     baseString,
     signature,
     redirectUrl,
@@ -75,10 +79,13 @@ export function buildAuthUrl(redirectUrl) {
 
 /* ============================================================
    STEP 2
-   EXCHANGE CODE
+   EXCHANGE CODE FOR TOKEN
 ============================================================ */
 
-export async function exchangeCodeForToken(code, shopId) {
+export async function exchangeCodeForToken(
+  code,
+  shopId
+) {
   const { partnerId, partnerKey } = getConfig();
 
   if (!code)
@@ -87,10 +94,13 @@ export async function exchangeCodeForToken(code, shopId) {
   if (!shopId)
     throw new Error("Missing shop_id");
 
-  const path = "/api/v2/auth/token/get";
+  const path =
+    "/api/v2/auth/token/get";
 
-  const timestamp = getTimestamp();
+  const timestamp =
+    getTimestamp();
 
+  // Shopee requires shop_id here
   const baseString =
     `${partnerId}${path}${timestamp}${shopId}`;
 
@@ -110,22 +120,35 @@ export async function exchangeCodeForToken(code, shopId) {
   };
 
   console.log("========== TOKEN ==========");
-  console.log("URL:", url);
-  console.log("BODY:", body);
-  console.log("BASE:", baseString);
-  console.log("SIGN:", signature);
+  console.log({
+    partnerId,
+    shopId,
+    timestamp,
+    path,
+    baseString,
+    signature,
+    partnerKeyLength:
+      partnerKey.length,
+  });
+
+  console.log("Request URL:", url);
+  console.log("Request Body:", body);
 
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type":
+        "application/json",
     },
     body: JSON.stringify(body),
   });
 
   const data = await res.json();
 
-  console.log("TOKEN RESPONSE:", data);
+  console.log(
+    "Shopee Response:",
+    JSON.stringify(data, null, 2)
+  );
 
   if (data.error) {
     throw new Error(
@@ -145,12 +168,14 @@ export async function refreshAccessToken(
   refreshToken,
   shopId
 ) {
-  const { partnerId, partnerKey } = getConfig();
+  const { partnerId, partnerKey } =
+    getConfig();
 
   const path =
     "/api/v2/auth/access_token/get";
 
-  const timestamp = getTimestamp();
+  const timestamp =
+    getTimestamp();
 
   const baseString =
     `${partnerId}${path}${timestamp}${shopId}`;
@@ -171,22 +196,35 @@ export async function refreshAccessToken(
   };
 
   console.log("========== REFRESH ==========");
-  console.log("URL:", url);
-  console.log("BODY:", body);
-  console.log("BASE:", baseString);
-  console.log("SIGN:", signature);
+  console.log({
+    partnerId,
+    shopId,
+    timestamp,
+    path,
+    baseString,
+    signature,
+    partnerKeyLength:
+      partnerKey.length,
+  });
+
+  console.log("Request URL:", url);
+  console.log("Request Body:", body);
 
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type":
+        "application/json",
     },
     body: JSON.stringify(body),
   });
 
   const data = await res.json();
 
-  console.log("REFRESH RESPONSE:", data);
+  console.log(
+    "Shopee Refresh Response:",
+    JSON.stringify(data, null, 2)
+  );
 
   if (data.error) {
     throw new Error(
@@ -197,4 +235,38 @@ export async function refreshAccessToken(
   return data;
 }
 
-export const createAuthURL = buildAuthUrl;
+/* ============================================================
+   STEP 4
+   SHOP API HELPER
+============================================================ */
+
+export function buildShopApiUrl(
+  path,
+  accessToken,
+  shopId,
+  params = {}
+) {
+  const { partnerId, partnerKey } =
+    getConfig();
+
+  const timestamp =
+    getTimestamp();
+
+  const baseString =
+    `${partnerId}${path}${timestamp}${accessToken}${shopId}`;
+
+  const signature =
+    sign(baseString, partnerKey);
+
+  return buildUrl(path, {
+    partner_id: partnerId,
+    timestamp,
+    access_token: accessToken,
+    shop_id: shopId,
+    sign: signature,
+    ...params,
+  });
+}
+
+export const createAuthURL =
+  buildAuthUrl;
