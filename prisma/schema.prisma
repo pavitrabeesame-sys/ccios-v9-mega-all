@@ -116,6 +116,7 @@ model Review {
   id           String       @id @default(cuid())
   reviewId     String       @unique
   marketplace  Marketplace
+  brand        String?
   storeName    String
   orderNumber  String?
   productName  String
@@ -123,6 +124,9 @@ model Review {
   customerName String
   rating       Int
   reviewText   String?
+  language     String?
+  sentiment    String?
+  category     String?
   aiReply      String?
   finalReply   String?
   status       ReviewStatus @default(PENDING)
