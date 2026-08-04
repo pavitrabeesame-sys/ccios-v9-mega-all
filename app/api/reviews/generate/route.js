@@ -1,74 +1,89 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../../src/lib/prisma";
-import { generateReply } from "../../../../src/services/reviews/AIReplyService";
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
 
 export async function POST(request) {
   try {
-
-    console.log("========== GENERATE API ==========");
-
-    console.log("METHOD:", request.method);
-
-const raw = await request.text();
-
-console.log("RAW BODY:");
-console.log(raw);
-
-if (!raw) {
-  throw new Error("Request body is empty.");
-}
-
-const { id } = JSON.parse(raw);
-
-    console.log("Review ID:", id);
+    const { reviewId } = await request.json();
 
     const review = await prisma.review.findUnique({
-      where: { id },
+      where: {
+        reviewId,
+      },
     });
-
-    console.log("Review Found:", review);
 
     if (!review) {
       return NextResponse.json(
-        { error: "Review not found" },
+        {
+          success: false,
+          error: "Review not found",
+        },
         { status: 404 }
       );
     }
 
-    console.log("Generating AI Reply...");
+    const prompt = `
+You are a professional Shopee customer service agent.
 
-    const aiReply = await generateReply(review);
+Customer Review:
+${review.reviewText}
 
-    console.log("AI Reply:");
-    console.log(aiReply);
+Rating:
+${review.rating}
 
-    console.log("Updating Database...");
+Write a polite, professional reply.
+`;
 
-    const updated = await prisma.review.update({
-      where: { id },
+    const ai = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+        }),
+      }
+    );
+
+    const result = await ai.json();
+
+    const reply =
+      result.choices?.[0]?.message?.content || "";
+
+    await prisma.review.update({
+      where: {
+        reviewId,
+      },
       data: {
-        aiReply,
+        aiReply: reply,
         status: "GENERATED",
       },
     });
 
-    console.log("Database Updated Successfully");
+    return NextResponse.json({
+      success: true,
+      reply,
+    });
 
-    return NextResponse.json(updated);
-
-  } catch (error) {
-
-    console.error("========== GROQ ERROR ==========");
-    console.error(error);
+  } catch (err) {
+    console.error(err);
 
     return NextResponse.json(
       {
-        error: error.message,
-        stack: error.stack,
+        success: false,
+        error: err.message,
       },
-      {
-        status: 500,
-      }
+      { status: 500 }
     );
   }
 }
