@@ -1,220 +1,79 @@
-import crypto from "crypto";
+import { NextResponse } from "next/server";
+import { PrismaClient } from "@prisma/client";
+import { buildShopApiUrl } from "@/src/services/shopee/AuthService";
 
-const HOST =
-  process.env.SHOPEE_HOST || "https://partner.shopeemobile.com";
+export const dynamic = "force-dynamic";
 
-function getConfig() {
-  const partnerId = Number(process.env.SHOPEE_PARTNER_ID);
-  const partnerKey = process.env.SHOPEE_PARTNER_KEY;
+const prisma = new PrismaClient();
 
-  if (!partnerId || !partnerKey) {
-    throw new Error("Missing SHOPEE_PARTNER_ID or SHOPEE_PARTNER_KEY");
-  }
+export async function GET() {
+  try {
+    const accounts = await prisma.shopeeAccount.findMany();
 
-  return {
-    partnerId,
-    partnerKey,
-  };
-}
+    console.log("========== ACCOUNTS ==========");
+    console.log(accounts);
 
-function getTimestamp() {
-  return Math.floor(Date.now() / 1000);
-}
+    if (accounts.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: "No Shopee accounts found",
+      });
+    }
 
-function sign(baseString, partnerKey) {
-  return crypto
-    .createHmac("sha256", partnerKey)
-    .update(baseString)
-    .digest("hex");
-}
+    const results = [];
 
-function buildUrl(path, params = {}) {
-  const url = new URL(HOST + path);
+    for (const account of accounts) {
 
-  Object.entries(params).forEach(([k, v]) => {
-    url.searchParams.set(k, String(v));
-  });
+      console.log("========== ACCOUNT ==========");
+      console.log({
+        shopId: account.shopId,
+        accessTokenExists: !!account.accessToken,
+        refreshTokenExists: !!account.refreshToken,
+      });
 
-  return url.toString();
-}
+      const url = buildShopApiUrl(
+        "/api/v2/product/get_comment",
+        String(account.accessToken),
+        String(account.shopId),
+        {
+          cursor: "",
+          page_size: 100,
+        }
+      );
 
-/* ===========================================================
-   STEP 1
-   AUTHORIZE
-=========================================================== */
+      console.log("REQUEST URL:");
+      console.log(url);
 
-export function buildAuthUrl(redirectUrl) {
-  const { partnerId, partnerKey } = getConfig();
+      const res = await fetch(url);
 
-  const path = "/api/v2/shop/auth_partner";
+      const data = await res.json();
 
-  const timestamp = getTimestamp();
+      console.log("RESPONSE:");
+      console.log(JSON.stringify(data, null, 2));
 
-  const baseString =
-    `${partnerId}${path}${timestamp}`;
+      results.push({
+        shopId: account.shopId,
+        data,
+      });
+    }
 
-  const signature =
-    sign(baseString, partnerKey);
+    return NextResponse.json({
+      success: true,
+      results,
+    });
 
-  return buildUrl(path, {
-    partner_id: partnerId,
-    timestamp,
-    sign: signature,
-    redirect: redirectUrl,
-  });
-}
+  } catch (err) {
 
-/* ===========================================================
-   STEP 2
-   GET ACCESS TOKEN
-=========================================================== */
+    console.error(err);
 
-export async function exchangeCodeForToken(code) {
-
-  const { partnerId, partnerKey } =
-    getConfig();
-
-  const path =
-    "/api/v2/auth/token/get";
-
-  const timestamp =
-    getTimestamp();
-
-  const baseString =
-    `${partnerId}${path}${timestamp}`;
-
-  const signature =
-    sign(baseString, partnerKey);
-
-  const url = buildUrl(path, {
-    partner_id: partnerId,
-    timestamp,
-    sign: signature,
-  });
-
-  const body = {
-    code,
-    partner_id: partnerId,
-  };
-
-  console.log("========== TOKEN ==========");
-  console.log({
-    url,
-    body,
-    timestamp,
-    baseString,
-    signature,
-  });
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type":
-        "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  const data = await res.json();
-
-  console.log(data);
-
-  if (data.error) {
-    throw new Error(
-      data.message || data.error
+    return NextResponse.json(
+      {
+        success: false,
+        error: err.message,
+      },
+      {
+        status: 500,
+      }
     );
   }
-
-  return data;
 }
-
-/* ===========================================================
-   STEP 3
-   REFRESH TOKEN
-=========================================================== */
-
-export async function refreshAccessToken(
-  refreshToken
-) {
-
-  const { partnerId, partnerKey } =
-    getConfig();
-
-  const path =
-    "/api/v2/auth/access_token/get";
-
-  const timestamp =
-    getTimestamp();
-
-  const baseString =
-    `${partnerId}${path}${timestamp}`;
-
-  const signature =
-    sign(baseString, partnerKey);
-
-  const url = buildUrl(path, {
-    partner_id: partnerId,
-    timestamp,
-    sign: signature,
-  });
-
-  const body = {
-    partner_id: partnerId,
-    refresh_token: refreshToken,
-  };
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type":
-        "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  const data = await res.json();
-
-  if (data.error) {
-    throw new Error(
-      data.message || data.error
-    );
-  }
-
-  return data;
-}
-
-/* ===========================================================
-   SHOP LEVEL API
-=========================================================== */
-
-export function buildShopApiUrl(
-  path,
-  accessToken,
-  shopId,
-  params = {}
-) {
-
-  const { partnerId, partnerKey } =
-    getConfig();
-
-  const timestamp =
-    getTimestamp();
-
-  const baseString =
-    `${partnerId}${path}${timestamp}${accessToken}${shopId}`;
-
-  const signature =
-    sign(baseString, partnerKey);
-
-  return buildUrl(path, {
-    partner_id: partnerId,
-    timestamp,
-    access_token: accessToken,
-    shop_id: shopId,
-    sign: signature,
-    ...params,
-  });
-}
-
-export const createAuthURL =
-  buildAuthUrl;
