@@ -1,36 +1,58 @@
-import { NextResponse } from "next/server";
-import { prisma } from "../../../../src/lib/prisma";
+import { PrismaClient } from "@prisma/client";
 
-export async function POST(request) {
+const prisma = new PrismaClient();
 
-  try {
 
-    const { id } = await request.json();
+export async function POST(request){
+
+  try{
+
+
+    const {id}=await request.json();
+
+
 
     const review = await prisma.review.update({
-      where: {
-        id,
+
+      where:{
+        id
       },
-      data: {
-        aiReply: null,
-        finalReply: null,
-        status: "REJECTED",
-      },
+
+
+      data:{
+        status:"REJECTED"
+      }
+
     });
 
-    return NextResponse.json(review);
 
-  } catch (error) {
 
-    return NextResponse.json(
+    return Response.json({
+
+      success:true,
+
+      review
+
+    });
+
+
+
+  }catch(error){
+
+
+    return Response.json(
+
       {
-        error: error.message,
+        error:error.message
       },
+
       {
-        status: 500,
+        status:500
       }
+
     );
 
   }
+
 
 }

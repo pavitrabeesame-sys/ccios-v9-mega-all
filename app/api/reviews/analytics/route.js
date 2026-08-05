@@ -1,66 +1,83 @@
-import { NextResponse } from "next/server";
-import { prisma } from "../../../../src/lib/prisma";
+// app/api/reviews/analytics/route.js
+
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
+
 
 export async function GET() {
 
-  const [
-    total,
-    pending,
-    approved,
-    rejected,
-    replied,
-    generated,
-    positive,
-    neutral,
-    negative,
-  ] = await Promise.all([
+  try {
 
-    prisma.review.count(),
+    const total = await prisma.review.count();
 
-    prisma.review.count({
-      where: { status: "PENDING" },
-    }),
 
-    prisma.review.count({
-      where: { status: "APPROVED" },
-    }),
+    const pending = await prisma.review.count({
+      where:{
+        status:"PENDING"
+      }
+    });
 
-    prisma.review.count({
-      where: { status: "REJECTED" },
-    }),
 
-    prisma.review.count({
-      where: { status: "REPLIED" },
-    }),
+    const generated = await prisma.review.count({
+      where:{
+        status:"GENERATED"
+      }
+    });
 
-    prisma.review.count({
-      where: { status: "GENERATED" },
-    }),
 
-    prisma.review.count({
-      where: { sentiment: "POSITIVE" },
-    }),
+    const approved = await prisma.review.count({
+      where:{
+        status:"APPROVED"
+      }
+    });
 
-    prisma.review.count({
-      where: { sentiment: "NEUTRAL" },
-    }),
 
-    prisma.review.count({
-      where: { sentiment: "NEGATIVE" },
-    }),
+    const replied = await prisma.review.count({
+      where:{
+        status:"REPLIED"
+      }
+    });
 
-  ]);
 
-  return NextResponse.json({
-    total,
-    pending,
-    approved,
-    rejected,
-    replied,
-    generated,
-    positive,
-    neutral,
-    negative,
-  });
+    const rejected = await prisma.review.count({
+      where:{
+        status:"REJECTED"
+      }
+    });
+
+
+    return Response.json({
+
+      total,
+
+      pending,
+
+      generated,
+
+      approved,
+
+      replied,
+
+      rejected
+
+    });
+
+
+  } catch(error){
+
+    return Response.json(
+
+      {
+        error:error.message
+      },
+
+      {
+        status:500
+      }
+
+    );
+
+  }
 
 }

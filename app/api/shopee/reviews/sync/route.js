@@ -1,82 +1,97 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { shopeeGet } from "@/lib/shopee";
+import { prisma } from "@/src/lib/prisma";
+import { buildShopApiUrl } from "@/src/services/shopee/AuthService";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    // Get all authorized Shopee accounts
-    const shops = await prisma.shopeeAccount.findMany();
+    const account = await prisma.shopeeAccount.findFirst();
 
-    if (shops.length === 0) {
+    if (!account) {
       return NextResponse.json({
         success: false,
-        message: "No Shopee accounts connected.",
+        error: "No Shopee account found.",
       });
     }
 
+    const url = buildShopApiUrl(
+      "/api/v2/product/get_comment",
+      account.accessToken,
+      account.shopId.toString(),
+      {
+        cursor: "",
+        page_size: 100,
+      }
+    );
+
+    const response = await fetch(url);
+    const json = await response.json();
+
+    if (json.error) {
+      return NextResponse.json({
+        success: false,
+        error: json.message,
+      });
+    }
+
+    const comments = json.response?.item_comment_list || [];
+
     let imported = 0;
 
-    for (const shop of shops) {
-      try {
-        // TODO:
-        // Replace this endpoint with the actual Shopee Reviews endpoint
-        const response = await shopeeGet(
-          shop.shopId.toString(),
-          "/api/v2/xxxxxxxxxxxxx",
-          {}
-        );
+    for (const item of comments) {
+      const reviewId = String(item.comment_id);
+      
+      const exists = await prisma.review.findUnique({
+        where: { reviewId },
+      });
 
-        const reviews = response.response?.reviews || [];
+      if (exists) continue;
 
-        for (const review of reviews) {
-          const exists = await prisma.review.findUnique({
-            where: {
-              reviewId: String(review.review_id),
-            },
-          });
+      // Look up the product in your database to find its actual brand
+      const product = await prisma.product.findFirst({
+        where: {
+          OR: [
+            { sku: String(item.item_id) },
+            { id: String(item.item_id) }
+          ]
+        },
+        include: { brand: true }, // Assumes your Product model has a relation to Brand
+      });
 
-          if (exists) continue;
+      // Dynamically assign the brand name if found, otherwise fallback safely
+      const brandName = product?.brand?.name || product?.brand || "Obermain";
 
-          await prisma.review.create({
-            data: {
-              reviewId: String(review.review_id),
-              marketplace: "SHOPEE",
-              storeName: shop.shopId.toString(),
-              orderNumber: review.order_sn || null,
-              productName: review.item_name || "",
-              productSku: review.model_sku || null,
-              customerName: review.author_username || "Customer",
-              rating: review.rating_star || 5,
-              reviewText: review.comment || "",
-              status: "PENDING",
-            },
-          });
+      await prisma.review.create({
+        data: {
+          reviewId,
+          marketplace: "SHOPEE",
+          brand: brandName, // Dynamic brand assignment!
+          storeName: "Shopee",
+          orderNumber: item.order_sn,
+          productName: String(item.item_id),
+          customerName: item.buyer_username,
+          rating: item.rating_star,
+          reviewText: item.comment || "",
+          status: "PENDING",
+        },
+      });
 
-          imported++;
-        }
-      } catch (err) {
-        console.error(
-          `Shop ${shop.shopId} sync failed`,
-          err
-        );
-      }
+      imported++;
     }
 
     return NextResponse.json({
       success: true,
       imported,
+      total: comments.length,
     });
-  } catch (error) {
-    console.error(error);
 
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message,
-      },
-      {
-        status: 500,
-      }
-    );
+  } catch (err) {
+    return NextResponse.json({
+      success: false,
+      error: err.message,
+    }, {
+      status: 500,
+    });
   }
 }

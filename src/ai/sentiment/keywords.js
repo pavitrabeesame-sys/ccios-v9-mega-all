@@ -1,35 +1,104 @@
-export const POSITIVE = [
+// src/ai/sentiment/keywords.js
+
+export const POSITIVE_KEYWORDS = [
+
   "good",
+  "great",
   "excellent",
   "perfect",
   "nice",
-  "fast",
   "love",
-  "great",
+  "happy",
   "recommended",
+  "recommend",
+  "fast",
   "quality",
   "worth",
   "awesome",
-  "happy",
-  "beautiful",
+  "best",
   "thank",
-  "best"
+  "thank you",
+
+  "bagus",
+  "baik",
+  "cantik",
+  "cepat",
+  "puas",
+  "terbaik",
+  "murah",
+  "berbaloi",
+  "terima kasih",
+
+  "很好",
+  "满意",
+  "喜欢",
+  "推荐",
+  "谢谢",
+  "棒",
+
 ];
 
-export const NEGATIVE = [
+export const NEGATIVE_KEYWORDS = [
+
   "bad",
+  "poor",
   "broken",
   "damage",
-  "poor",
-  "late",
+  "damaged",
   "refund",
-  "return",
   "fake",
+  "late",
+  "slow",
+  "missing",
   "wrong",
   "terrible",
+  "awful",
+  "cheap quality",
   "disappointed",
-  "slow",
-  "problem",
-  "issue",
-  "missing"
+
+  "rosak",
+  "lambat",
+  "kecewa",
+  "benci",
+  "cacat",
+  "pecah",
+
+  "坏",
+  "慢",
+  "失望",
+  "破",
+  "退款",
+
 ];
+
+export const NEUTRAL_KEYWORDS = [
+
+  "received",
+
+  "arrived",
+
+  "ok",
+
+  "okay",
+
+  "normal",
+
+  "parcel",
+
+  "product",
+
+  "barang",
+
+  "收到",
+
+];
+
+export default {
+
+  POSITIVE_KEYWORDS,
+
+  NEGATIVE_KEYWORDS,
+
+  NEUTRAL_KEYWORDS,
+
+};

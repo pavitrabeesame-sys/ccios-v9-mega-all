@@ -2,85 +2,202 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
+import { useRouter } from "next/navigation";
+
 
 export default function LoginPage() {
+
+
+  const router = useRouter();
+
+
   const [email, setEmail] = useState("");
+
   const [password, setPassword] = useState("");
 
+  const [error, setError] = useState("");
+
+  const [loading, setLoading] = useState(false);
+
+
+
   async function handleSubmit(e) {
+
     e.preventDefault();
 
-    await signIn("credentials", {
+
+    setError("");
+
+    setLoading(true);
+
+
+
+    const result = await signIn("credentials", {
+
       email,
+
       password,
-      callbackUrl: "/dashboard",
+
+      redirect: false,
+
     });
+
+
+
+    if (result?.error) {
+
+
+      setError(
+        "Invalid email or password"
+      );
+
+
+      setLoading(false);
+
+
+      return;
+
+
+    }
+
+
+
+    router.push("/dashboard");
+
+
   }
 
+
+
+
+
   return (
+
+
     <div
-      style={{
-        display: "grid",
-        placeItems: "center",
-        height: "100vh",
-        background: "#111827",
-      }}
+      className="min-h-screen flex items-center justify-center bg-gray-950"
     >
+
+
+
       <form
+
         onSubmit={handleSubmit}
-        style={{
-          width: 360,
-          background: "#1f2937",
-          padding: 30,
-          borderRadius: 12,
-        }}
+
+        className="w-[380px] bg-gray-900 p-8 rounded-2xl shadow-xl"
+
       >
-        <h1 style={{ color: "white", textAlign: "center" }}>
-          CCIOS Login
+
+
+
+        <h1
+          className="text-3xl font-bold text-white text-center mb-2"
+        >
+
+          CCIOS
+
         </h1>
 
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={{
-            width: "100%",
-            padding: 12,
-            marginTop: 20,
-            borderRadius: 6,
-          }}
-        />
+
+
+        <p
+          className="text-gray-400 text-center mb-6"
+        >
+
+          Commerce Intelligence OS
+
+        </p>
+
+
+
+
+
+        {error && (
+
+          <div
+            className="bg-red-500/20 text-red-300 p-3 rounded-lg mb-4 text-sm"
+          >
+
+            {error}
+
+          </div>
+
+        )}
+
+
+
+
+
 
         <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{
-            width: "100%",
-            padding: 12,
-            marginTop: 15,
-            borderRadius: 6,
-          }}
+
+          type="email"
+
+          placeholder="Email"
+
+          value={email}
+
+          onChange={(e)=>setEmail(e.target.value)}
+
+          className="w-full p-3 rounded-lg bg-gray-800 text-white border border-gray-700 mb-4"
+
+          required
+
         />
+
+
+
+
+
+
+        <input
+
+          type="password"
+
+          placeholder="Password"
+
+          value={password}
+
+          onChange={(e)=>setPassword(e.target.value)}
+
+          className="w-full p-3 rounded-lg bg-gray-800 text-white border border-gray-700 mb-6"
+
+          required
+
+        />
+
+
+
+
+
+
 
         <button
+
           type="submit"
-          style={{
-            width: "100%",
-            marginTop: 20,
-            padding: 12,
-            borderRadius: 6,
-            background: "#2563eb",
-            color: "#fff",
-            border: "none",
-            cursor: "pointer",
-          }}
+
+          disabled={loading}
+
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg font-semibold"
+
         >
-          Login
+
+
+          {loading ? "Logging in..." : "Login"}
+
+
         </button>
+
+
+
+
       </form>
+
+
     </div>
+
+
   );
+
+
 }

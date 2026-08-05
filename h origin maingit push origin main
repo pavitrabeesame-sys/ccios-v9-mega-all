@@ -1,0 +1,74 @@
+warning: in the working copy of 'app/api/auth/lazada/callback/route.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/api/reviews/[id]/route.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/api/shopee/products/sync/route.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'prisma/schema.prisma', LF will be replaced by CRLF the next time Git touches it
+ app/ai/brands/page.jsx                       | 149 [32m++++[m[31m----[m
+ app/ai/knowledge/page.jsx                    | 246 [32m+++++++++++[m[31m--[m
+ app/ai/page.jsx                              | 106 [32m++++[m[31m--[m
+ app/ai/prompts/page.jsx                      | 308 [32m+++++++++++[m[31m-----[m
+ app/api/ai/brands/route.js                   |  90 [32m++[m[31m---[m
+ app/api/ai/knowledge/route.js                |  96 [32m++++[m[31m-[m
+ app/api/ai/prompts/route.js                  |  99 [32m++++[m[31m-[m
+ app/api/auth/lazada/callback/route.js        |  36 [32m++[m
+ app/api/reviews/[id]/route.js                |  90 [32m++[m[31m---[m
+ app/api/reviews/analytics/route.js           | 139 [32m+++[m[31m----[m
+ app/api/reviews/approve-all/route.js         |  62 [32m+++[m[31m-[m
+ app/api/reviews/approve/route.js             |  71 [32m++[m[31m--[m
+ app/api/reviews/dashboard/route.js           |  11 [31m-[m
+ app/api/reviews/export/route.js              |  18 [31m-[m
+ app/api/reviews/generate-all/route.js        | 116 [32m+++++[m[31m-[m
+ app/api/reviews/generate/route.js            | 171 [32m++++++[m[31m---[m
+ app/api/reviews/insights/route.js            |  23 [31m--[m
+ app/api/reviews/reject/route.js              |  56 [32m++[m[31m-[m
+ app/api/reviews/reply-all/route.js           | 178 [32m+++++++[m[31m--[m
+ app/api/reviews/route.js                     | 160 [32m+++++[m[31m---[m
+ app/api/reviews/smart-sync/route.js          |  68 [31m----[m
+ app/api/shopee/products/sync/route.js        | 190 [32m+++++++[m[31m---[m
+ app/api/shopee/reviews/sync/route.js         | 137 [32m+++[m[31m----[m
+ app/dashboard/page.jsx                       |  83 [32m++++[m[31m-[m
+ app/login/page.js                            | 199 [32m+++++++[m[31m---[m
+ app/reviews/analytics/page.js                |  39 [31m--[m
+ app/reviews/analytics/page.jsx               |  38 [31m--[m
+ app/reviews/dashboard/page.js                |  19 [31m-[m
+ app/reviews/insights/page.js                 |  42 [31m---[m
+ app/reviews/page.jsx                         | 174 [31m---------[m
+ lib/lazada.js                                |  10 [32m+[m[31m-[m
+ prisma/schema.prisma                         | 151 [32m+++++[m[31m---[m
+ src/ai/approval/approvalEngine.js            |  39 [31m--[m
+ src/ai/approval/rules.js                     |  21 [31m--[m
+ src/ai/category/classifyReview.js            | 106 [32m+++++[m[31m-[m
+ src/ai/category/keywords.js                  | 111 [32m+++++[m[31m-[m
+ src/ai/language/detectLanguage.js            |  51 [31m---[m
+ src/ai/language/translate.js                 |  62 [32m+++[m[31m-[m
+ src/ai/prompts/bhpc.js                       |  34 [32m+[m[31m-[m
+ src/ai/prompts/hushpuppies.js                |  34 [32m+[m[31m-[m
+ src/ai/prompts/index.js                      |  41 [32m++[m[31m-[m
+ src/ai/prompts/johnlangford.js               |  35 [32m+[m[31m-[m
+ src/ai/prompts/nicole.js                     |  37 [32m++[m
+ src/ai/prompts/obermain.js                   |  38 [32m+[m[31m-[m
+ src/ai/reply/generateAll.js                  |  50 [31m---[m
+ src/ai/reply/generateReply.js                |  86 [31m-----[m
+ src/ai/reply/replyToShopee.js                |  70 [31m----[m
+ src/ai/sentiment/analyzeSentiment.js         |  40 [31m--[m
+ src/ai/sentiment/keywords.js                 |  99 [32m++++[m[31m-[m
+ src/components/reviews/BulkActionButtons.jsx |   0
+ src/components/reviews/BulkToolbar.jsx       |  29 [31m--[m
+ src/components/reviews/ImportCSV.jsx         |  55 [31m---[m
+ src/components/reviews/MarketplaceBadge.jsx  |  20 [31m-[m
+ src/components/reviews/ReplyEditor.jsx       |  25 [31m--[m
+ src/components/reviews/ReviewCard.jsx        |  47 [31m---[m
+ src/components/reviews/ReviewFilters.jsx     |  32 [31m--[m
+ src/components/reviews/ReviewModal.jsx       |  65 [31m----[m
+ src/components/reviews/ReviewStats.jsx       |  23 [31m--[m
+ src/components/reviews/ReviewTable.jsx       | 217 [31m-----------[m
+ src/components/reviews/ReviewToolbar.jsx     |   0
+ src/components/reviews/StatusBadge.jsx       |  21 [31m--[m
+ src/components/reviews/TemplateSelector.jsx  |  22 [31m--[m
+ src/hooks/reviews/useReviewStats.js          |  52 [31m---[m
+ src/hooks/reviews/useReviews.js              |  43 [31m---[m
+ src/lib/prisma.js                            |  15 [32m+[m[31m-[m
+ src/services/ai/GroqService.js               |   8 [32m+[m[31m-[m
+ src/services/reviews/ReviewService.js        |  35 [31m--[m
+ src/services/shopee/AuthService.js           | 514 [32m+++++++++++++++++++[m[31m-------[m
+ src/services/shopee/ProductService.js        | 521 [32m+++++++++++++++++++++++++++[m
+ 69 files changed, 3540 insertions(+), 2533 deletions(-)

@@ -1,72 +1,26 @@
+// app/api/ai/brands/route.js
 import { NextResponse } from "next/server";
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
 
 export async function GET() {
+  try {
+    const brands = await prisma.brand.findMany({
+      include: {
+        aiProfile: true,
+        company: true,
+      },
+      orderBy: {
+        name: "asc",
+      },
+    });
 
-  return NextResponse.json([
-
-    {
-      id:1,
-      brand:"RAV Design",
-      store:"ravdesign.os",
-      model:"qwen3:4b",
-      tone:"Premium",
-      active:true,
-    },
-
-    {
-      id:2,
-      brand:"Champion",
-      store:"championmy.os",
-      model:"qwen3:4b",
-      tone:"Sporty",
-      active:true,
-    },
-
-    {
-      id:3,
-      brand:"John Langford",
-      store:"johnlangford.os",
-      model:"qwen3:4b",
-      tone:"Classic",
-      active:true,
-    },
-
-    {
-      id:4,
-      brand:"Beverly Hills Polo Club",
-      store:"beverlyhillspoloclub",
-      model:"qwen3:4b",
-      tone:"Luxury",
-      active:true,
-    },
-
-    {
-      id:5,
-      brand:"Hush Puppies",
-      store:"hushpuppiesmy.os",
-      model:"qwen3:4b",
-      tone:"Friendly",
-      active:true,
-    },
-
-    {
-      id:6,
-      brand:"Obermain",
-      store:"obermain.os",
-      model:"qwen3:4b",
-      tone:"Rugged",
-      active:true,
-    },
-
-    {
-      id:7,
-      brand:"Nicole Collection",
-      store:"nicolecollection",
-      model:"qwen3:4b",
-      tone:"Elegant",
-      active:true,
-    }
-
-  ]);
-
+    return NextResponse.json(brands);
+  } catch (error) {
+    return NextResponse.json(
+      { error: "Failed to fetch AI brand profiles", details: error.message },
+      { status: 500 }
+    );
+  }
 }

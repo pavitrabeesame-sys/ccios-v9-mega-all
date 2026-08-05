@@ -1,36 +1,62 @@
-import { NextResponse } from "next/server";
-import { prisma } from "../../../../src/lib/prisma";
+import { PrismaClient } from "@prisma/client";
 
-export async function POST() {
+const prisma = new PrismaClient();
 
-  try {
 
-    const result = await prisma.review.updateMany({
+export async function POST(request){
 
-      where: {
-        status: "GENERATED",
+  try{
+
+    const { ids } = await request.json();
+
+
+    if(!ids || !ids.length){
+
+      return Response.json(
+        {
+          error:"No reviews selected"
+        },
+        {
+          status:400
+        }
+      );
+
+    }
+
+
+    const updated = await prisma.review.updateMany({
+
+      where:{
+        id:{
+          in:ids
+        }
       },
 
-      data: {
-        status: "APPROVED",
-      },
+      data:{
+        status:"APPROVED"
+      }
 
     });
 
-    return NextResponse.json({
-      success: true,
-      approved: result.count,
+
+
+    return Response.json({
+
+      success:true,
+
+      updated:updated.count
+
     });
 
-  } catch (error) {
 
-    return NextResponse.json(
+  }catch(error){
+
+    return Response.json(
       {
-        success: false,
-        error: error.message,
+        error:error.message
       },
       {
-        status: 500,
+        status:500
       }
     );
 

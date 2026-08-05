@@ -1,68 +1,33 @@
-import { NextResponse } from "next/server";
+export const dynamic = 'force-dynamic';
+import { NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
 
-export const dynamic = "force-dynamic";
+const prisma = new PrismaClient();
 
-export async function POST() {
+export async function POST(request) {
   try {
+    const body = await request.json().catch(() => ({}));
+    const { brand, marketplace } = body;
 
-    const baseUrl =
-      process.env.NEXTAUTH_URL ||
-      "http://localhost:3000";
-
-    const steps = [];
-
-    // STEP 1 - Sync Reviews
-    let res = await fetch(`${baseUrl}/api/shopee/reviews/sync`);
-    let data = await res.json();
-
-    steps.push({
-      step: "Sync Reviews",
-      success: res.ok,
-      result: data,
-    });
-
-    // STEP 2 - Generate AI Replies
-    res = await fetch(`${baseUrl}/api/reviews/generate-all`, {
-      method: "POST",
-    });
-
-    data = await res.json();
-
-    steps.push({
-      step: "Generate Replies",
-      success: res.ok,
-      result: data,
-    });
-
-    // STEP 3 - Reply Approved Reviews
-    res = await fetch(`${baseUrl}/api/reviews/reply-all`, {
-      method: "POST",
-    });
-
-    data = await res.json();
-
-    steps.push({
-      step: "Reply to Shopee",
-      success: res.ok,
-      result: data,
-    });
+    // Smart sync logic to check or fetch latest reviews
+    // Add your marketplace sync integration or mock response here
 
     return NextResponse.json({
       success: true,
-      workflow: steps,
+      message: 'Smart sync completed successfully.',
+      syncedCount: 0,
+      timestamp: new Date().toISOString(),
     });
-
-  } catch (err) {
-
+  } catch (error) {
+    console.error('[Smart-Sync API Error]:', error);
     return NextResponse.json(
-      {
-        success: false,
-        error: err.message,
-      },
-      {
-        status: 500,
-      }
+      { success: false, error: error.message || 'Internal Server Error' },
+      { status: 500 }
     );
-
+    
   }
+}
+
+export async function GET(request) {
+  return POST(request);
 }

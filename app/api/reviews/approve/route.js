@@ -1,38 +1,65 @@
-import { NextResponse } from "next/server";
-import { prisma } from "../../../../src/lib/prisma";
+import { PrismaClient } from "@prisma/client";
 
-export async function POST(request) {
+const prisma = new PrismaClient();
 
-  try {
 
-    const { id } = await request.json();
+export async function POST(request){
 
-    const review = await prisma.review.findUnique({
-      where: { id },
-    });
+  try{
 
-    if (!review) {
-      return NextResponse.json(
-        { error: "Review not found." },
-        { status: 404 }
+    const {id}=await request.json();
+
+
+    if(!id){
+
+      return Response.json(
+        {
+          error:"Missing review id"
+        },
+        {
+          status:400
+        }
       );
+
     }
 
-    const updated = await prisma.review.update({
-      where: { id },
-      data: {
-        finalReply: review.aiReply,
-        status: "APPROVED",
+
+    const review = await prisma.review.update({
+
+      where:{
+        id
       },
+
+      data:{
+        status:"APPROVED"
+      }
+
     });
 
-    return NextResponse.json(updated);
 
-  } catch (error) {
 
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
+    return Response.json({
+
+      success:true,
+
+      review
+
+    });
+
+
+
+  }catch(error){
+
+    return Response.json(
+
+      {
+        error:error.message
+      },
+
+      {
+        status:500
+      }
+
     );
 
   }

@@ -8,26 +8,29 @@ datasource db {
 }
 
 model Company {
-  id          String   @id @default(cuid())
-  name        String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  code        String   @unique
-  description String?
-  brands      Brand[]
-  stores      Store[]
-  users       User[]
+  id             String          @id @default(cuid())
+  name           String
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  code           String          @unique
+  description    String?
+  brands         Brand[]
+  Product        Product[]
+  stores         Store[]
+  users          User[]
+  lazadaAccounts LazadaAccount[]
 }
 
 model Brand {
-  id          String    @id @default(cuid())
+  id          String     @id @default(cuid())
   name        String
   companyId   String
-  code        String    @unique
-  createdAt   DateTime  @default(now())
+  code        String     @unique
+  createdAt   DateTime   @default(now())
   description String?
-  updatedAt   DateTime  @updatedAt
-  company     Company   @relation(fields: [companyId], references: [id])
+  updatedAt   DateTime   @updatedAt
+  AIProfile   AIProfile?
+  company     Company    @relation(fields: [companyId], references: [id])
   products    Product[]
 }
 
@@ -56,28 +59,33 @@ model Store {
 }
 
 model Product {
-  id          String    @id @default(cuid())
-  sku         String    @unique
-  name        String
-  price       Float
-  stock       Int       @default(0)
-  brandId     String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  barcode     String?   @unique
-  description String?
-  categoryId  String?
-  costPrice   Float     @default(0)
-  height      Float?
-  image       String?
-  length      Float?
-  maxStock    Int?
-  minStock    Int       @default(5)
-  status      String    @default("ACTIVE")
-  weight      Float?
-  width       Float?
-  brand       Brand     @relation(fields: [brandId], references: [id])
-  category    Category? @relation(fields: [categoryId], references: [id])
+  id           String       @id @default(cuid())
+  sku          String       @unique
+  name         String
+  price        Float
+  stock        Int          @default(0)
+  brandId      String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  barcode      String?      @unique
+  description  String?
+  categoryId   String?
+  costPrice    Float        @default(0)
+  height       Float?
+  image        String?
+  length       Float?
+  maxStock     Int?
+  minStock     Int          @default(5)
+  status       String       @default("ACTIVE")
+  weight       Float?
+  width        Float?
+  companyId    String?
+  lastSync     DateTime?
+  marketplace  Marketplace  @default(SHOPEE)
+  shopeeItemId BigInt?
+  brand        Brand        @relation(fields: [brandId], references: [id])
+  category     Category?    @relation(fields: [categoryId], references: [id])
+  Company      Company?     @relation(fields: [companyId], references: [id])
 }
 
 model Customer {
@@ -99,7 +107,7 @@ model Order {
 }
 
 model User {
-  id        String    @id @default(cuid())
+    id        String    @id @default(cuid())
   name      String?
   email     String    @unique
   password  String
@@ -116,7 +124,6 @@ model Review {
   id           String       @id @default(cuid())
   reviewId     String       @unique
   marketplace  Marketplace
-  brand        String?
   storeName    String
   orderNumber  String?
   productName  String
@@ -124,15 +131,24 @@ model Review {
   customerName String
   rating       Int
   reviewText   String?
-  language     String?
-  sentiment    String?
-  category     String?
   aiReply      String?
   finalReply   String?
   status       ReviewStatus @default(PENDING)
   repliedAt    DateTime?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+  brand        String?
+  category     String?
+  language     String?
+  sentiment    String?
+  approvedBy   String?
+  confidence   Float?
+  emotion      String?
+  imageUrls    String[]
+  keywords     String[]
+  repliedBy    String?
+  syncTime     DateTime?
+  videoUrls    String[]
 }
 
 model ReplyTemplate {
@@ -142,6 +158,45 @@ model ReplyTemplate {
   title     String
   template  String
   createdAt DateTime @default(now())
+}
+
+model AIProfile {
+  id             String   @id @default(cuid())
+  brandId        String   @unique
+  model          String   @default("qwen3:4b")
+  tone           String   @default("Professional")
+  personality    String?
+  brandRules     String?
+  forbiddenWords String[]
+  replyStyle     String?
+  knowledgeBase  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  Brand          Brand    @relation(fields: [brandId], references: [id])
+}
+
+model ShopeeAccount {
+  id           String   @id @default(cuid())
+  shopId       BigInt   @unique
+  accessToken  String
+  refreshToken String
+  expireIn     Int
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}
+
+model LazadaAccount {
+  id           String   @id @default(cuid())
+  sellerId     String   @unique
+  appKey       String
+  appSecret    String
+  accessToken  String
+  refreshToken String
+  expireIn     Int
+  companyId    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  company      Company? @relation(fields: [companyId], references: [id])
 }
 
 enum Role {
@@ -168,17 +223,5 @@ enum ReviewStatus {
   APPROVED
   REJECTED
   REPLIED
-}
-
-model ShopeeAccount {
-  id           String   @id @default(cuid())
-
-  shopId       BigInt   @unique
-
-  accessToken  String
-  refreshToken String
-  expireIn     Int
-
-  updatedAt    DateTime @updatedAt
-  createdAt    DateTime @default(now())
+  
 }

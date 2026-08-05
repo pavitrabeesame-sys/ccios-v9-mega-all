@@ -9,7 +9,7 @@ export async function askGroq(prompt) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: process.env.GROQ_MODEL,
+        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile", // Added fallback here
         temperature: 0.3,
         max_tokens: 200,
         messages: [
@@ -28,21 +28,15 @@ export async function askGroq(prompt) {
   );
 
   if (!response.ok) {
-
     const error = await response.text();
-
     console.log("========== GROQ API ERROR ==========");
     console.log(error);
-
     throw new Error(error);
-
   }
 
   const data = await response.json();
-
   console.log("========== GROQ RESPONSE ==========");
   console.dir(data, { depth: null });
 
   return data.choices[0].message.content.trim();
-
 }
