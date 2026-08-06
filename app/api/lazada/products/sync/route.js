@@ -1,53 +1,79 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { LAZADA_BRAND_MAPPING } from '@/src/lib/brandMapping';
 import { lazadaGet } from '@/lib/lazada';
-
-export const dynamic = 'force-dynamic';
 
 const prisma = new PrismaClient();
 
 export async function GET(request) {
   try {
+    // Fetch accounts using the correct Prisma model name: lazadaAccount
     const accounts = await prisma.lazadaAccount.findMany();
 
     if (!accounts || accounts.length === 0) {
-      return NextResponse.json({ 
-        success: false, 
-        message: "No Lazada accounts found in the database. Please complete authorization first." 
-      }, { status: 400 });
+      return NextResponse.json({ success: false, error: "No lazadaAccount records found in database." }, { status: 404 });
     }
 
-    let syncResults = [];
+    const results = [];
+
+    // Find the parent company record to satisfy Brand relation constraints
+    const company = await prisma.company.findFirst();
+    if (!company) {
+      return NextResponse.json({ success: false, error: "No company record found in database for brand relations." }, { status: 400 });
+    }
 
     for (const account of accounts) {
+      const sellerId = account.sellerId;
+      const brandInfo = LAZADA_BRAND_MAPPING[sellerId];
+      let brandId = null;
+      let brandName = "Unassigned";
+
+      if (brandInfo) {
+        brandName = brandInfo.name;
+        const brandRecord = await prisma.brand.upsert({
+          where: { code: brandInfo.code },
+          update: { name: brandInfo.name },
+          create: {
+            name: brandInfo.name,
+            code: brandInfo.code,
+            companyId: company.id
+          }
+        });
+        brandId = brandRecord.id;
+      }
+
       try {
-        const response = await lazadaGet(account.sellerId, '/products/get', {
+        const response = await lazadaGet(sellerId, '/products/get', {
           filter: 'all',
-          offset: '0',
-          limit: '50'
+          limit: 50
         });
 
-        const products = response.data?.products || [];
+        const products = response?.data?.products || [];
         let importedCount = 0;
 
         for (const item of products) {
           const sku = item.skus?.[0]?.SellerSku || String(item.item_id);
-          const productName = item.product_name || `Lazada Item ${item.item_id}`;
+          const name = item.product_name || `Lazada Item ${item.item_id}`;
+          const price = Number(item.skus?.[0]?.price || item.skus?.[0]?.offer_price || 0);
+          const stock = Number(item.skus?.[0]?.stock || 0);
 
           if (!sku) continue;
-
-          let brandId = account.brandId || null;
 
           await prisma.product.upsert({
             where: { sku: sku },
             update: {
-              name: productName,
+              name: name,
+              price: price,
+              stock: stock,
+              brandId: brandId,
               updatedAt: new Date(),
             },
             create: {
               sku: sku,
-              name: productName,
-              marketplace: 'Lazada',
+              name: name,
+              marketplace: 'LAZADA',
+              price: price,
+              stock: stock,
               brandId: brandId,
             },
           });
@@ -55,35 +81,27 @@ export async function GET(request) {
           importedCount++;
         }
 
-        syncResults.push({ 
-          sellerId: account.sellerId, 
-          brand: account.brand || 'Unassigned', 
-          importedCount, 
-          status: 'success' 
+        results.push({
+          sellerId,
+          brand: brandName,
+          imported: importedCount,
+          status: 'success'
         });
 
-      } catch (err) {
-        console.error(`[Lazada Sync Error] Account ${account.sellerId}:`, err.message);
-        syncResults.push({ 
-          sellerId: account.sellerId, 
-          brand: account.brand || 'Unassigned', 
-          error: err.message, 
-          status: 'failed' 
+      } catch (accountError) {
+        results.push({
+          sellerId,
+          brand: brandName,
+          error: accountError.message,
+          status: 'failed'
         });
       }
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      message: 'Lazada multi-brand product synchronization completed.', 
-      results: syncResults 
-    });
+    return NextResponse.json({ success: true, results });
 
   } catch (error) {
-    console.error("LAZADA PRODUCTS SYNC API ERROR:", error);
-    return NextResponse.json(
-      { success: false, error: error.message },
-      { status: 500 }
-    );
+    console.error('[Lazada Sync Route Error]:', error);
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

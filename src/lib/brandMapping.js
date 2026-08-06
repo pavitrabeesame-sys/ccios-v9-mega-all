@@ -11,6 +11,14 @@ const FALLBACK_MAP = {
   "300934544102": "BHPC",
 };
 
+export const LAZADA_BRAND_MAPPING = {
+  "1000055891": { name: "RAV", code: "RAV" },
+  "100164017": { name: "Nicole", code: "NICOLE" },
+  "300749392344": { name: "Obermain", code: "OBERMAIN" },
+  "300763632066": { name: "Hush Puppies", code: "HUSH_PUPPIES" },
+  "300934544102": { name: "Beverly Hills Polo Club", code: "BHPC" }
+};
+
 export async function resolveBrandName(marketplace, storeId) {
   const cleanStoreId = String(storeId || "").trim();
   const cleanMarketplace = String(marketplace || "").toUpperCase();
