@@ -7,7 +7,6 @@ const prisma = new PrismaClient();
 
 export async function GET(request) {
   try {
-    // Fetch accounts using the correct Prisma model name: lazadaAccount
     const accounts = await prisma.lazadaAccount.findMany();
 
     if (!accounts || accounts.length === 0) {
@@ -16,7 +15,6 @@ export async function GET(request) {
 
     const results = [];
 
-    // Find the parent company record to satisfy Brand relation constraints
     const company = await prisma.company.findFirst();
     if (!company) {
       return NextResponse.json({ success: false, error: "No company record found in database for brand relations." }, { status: 400 });
