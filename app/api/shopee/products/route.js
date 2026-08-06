@@ -1,86 +1,47 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { shopeeGet } from "@/lib/shopee";
+import { NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
 
-export async function GET() {
+export const dynamic = 'force-dynamic';
+
+const prisma = new PrismaClient();
+
+export async function GET(request) {
   try {
-    const shops = await prisma.shopeeAccount.findMany();
+    const { searchParams } = new URL(request.url);
+    const brand = searchParams.get('brand');
+    const search = searchParams.get('search');
 
-    if (shops.length === 0) {
-      return NextResponse.json({
-        success: false,
-        message: "No Shopee accounts connected."
-      });
+    let whereClause = {
+      marketplace: { contains: 'Shopee', mode: 'insensitive' }
+    };
+
+    if (brand && brand !== 'ALL') {
+      whereClause.brand = {
+        is: {
+          name: { equals: brand, mode: 'insensitive' }
+        }
+      };
     }
 
-    let imported = 0;
-
-    for (const shop of shops) {
-      let offset = 0;
-      let more = true;
-
-      while (more) {
-        const result = await shopeeGet(
-          shop.shopId.toString(),
-          "/api/v2/product/get_item_list",
-          {
-            offset,
-            page_size: 100,
-            item_status: "NORMAL"
-          }
-        );
-
-        const response = result.response || {};
-        const items = response.item || [];
-
-        for (const item of items) {
-          const exists = await prisma.product.findFirst({
-            where: {
-              sku: String(item.item_id)
-            }
-          });
-
-          if (exists) continue;
-
-          await prisma.product.create({
-            data: {
-              sku: String(item.item_id),
-              name: item.item_name || `Shopee Item ${item.item_id}`,
-              price: 0,
-              stock: 0,
-
-              // Replace with a valid Brand ID from your database
-              brandId: "YOUR_BRAND_ID"
-            }
-          });
-
-          imported++;
-        }
-
-        more = response.has_next_page === true;
-
-        if (more) {
-          offset += 100;
-        }
-      }
+    if (search) {
+      whereClause.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { sku: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
-    return NextResponse.json({
-      success: true,
-      imported
+    const products = await prisma.product.findMany({
+      where: whereClause,
+      include: { brand: true },
+      orderBy: { updatedAt: 'desc' },
     });
 
+    return NextResponse.json({ success: true, products });
   } catch (error) {
-    console.error(error);
-
+    console.error("SHOPEE PRODUCTS API ERROR:", error);
     return NextResponse.json(
-      {
-        success: false,
-        error: error.message
-      },
-      {
-        status: 500
-      }
+      { success: false, error: error.message },
+      { status: 500 }
     );
   }
 }

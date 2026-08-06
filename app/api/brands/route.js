@@ -9,8 +9,9 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
 
     const search = searchParams.get("search") || "";
+    const fetchAll = searchParams.get("all") === "true";
     const page = Number(searchParams.get("page")) || 1;
-    const limit = 10;
+    const limit = Number(searchParams.get("limit")) || 10;
 
     const where = {
       OR: [
@@ -29,29 +30,61 @@ export async function GET(request) {
       ],
     };
 
+    if (fetchAll) {
+      let brands = await prisma.brand.findMany({
+        where,
+        include: {
+          company: true,
+          products: true,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+      // Filter out internal store IDs and marketplace names from the dropdown list
+      brands = brands.filter((b) => {
+        const name = (b.name || "").trim();
+        if (name.startsWith("Store_")) return false;
+        if (name.toLowerCase() === "shopee") return false;
+        return true;
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: brands,
+        brands: brands,
+      });
+    }
+
     const total = await prisma.brand.count({
       where,
     });
 
-    const brands = await prisma.brand.findMany({
+    let brands = await prisma.brand.findMany({
       where,
-
       include: {
         company: true,
         products: true,
       },
-
       orderBy: {
         createdAt: "desc",
       },
-
       skip: (page - 1) * limit,
       take: limit,
+    });
+
+    brands = brands.filter((b) => {
+      const name = (b.name || "").trim();
+      if (name.startsWith("Store_")) return false;
+      if (name.toLowerCase() === "shopee") return false;
+      return true;
     });
 
     return NextResponse.json({
       success: true,
       data: brands,
+      brands: brands,
       pagination: {
         page,
         limit,

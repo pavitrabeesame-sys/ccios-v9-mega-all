@@ -1,66 +1,45 @@
-const { PrismaClient } = require("@prisma/client");
-
+import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-
-  await prisma.review.deleteMany();
-
-  await prisma.review.createMany({
-
-    data: [
-
-      {
-        reviewId: "REV0001",
-        marketplace: "SHOPEE",
-        storeName: "ravdesign.os",
-        orderNumber: "SP100001",
-        productName: "RAV Leather Wallet",
-        productSku: "RAV-WLT-001",
-        customerName: "Ahmad",
-        rating: 5,
-        reviewText: "Barang sangat cantik dan kulit berkualiti.",
-        status: "PENDING",
-      },
-
-      {
-        reviewId: "REV0002",
-        marketplace: "SHOPEE",
-        storeName: "championmy.os",
-        orderNumber: "SP100002",
-        productName: "Champion Backpack",
-        productSku: "CH-BAG-001",
-        customerName: "Jason",
-        rating: 5,
-        reviewText: "Very good quality. Fast delivery.",
-        status: "PENDING",
-      },
-
-      {
-        reviewId: "REV0003",
-        marketplace: "SHOPEE",
-        storeName: "nicolecollection",
-        orderNumber: "SP100003",
-        productName: "Women's Blouse",
-        productSku: "NC-BLS-001",
-        customerName: "Siti",
-        rating: 4,
-        reviewText: "Baju cantik dan selesa dipakai.",
-        status: "PENDING",
-      }
-
-    ]
-
+  // Example: Creating Brands
+  const hushPuppies = await prisma.brand.upsert({
+    where: { name: 'Hush Puppies' },
+    update: {},
+    create: { name: 'Hush Puppies' },
   });
 
-  console.log("✅ Seed completed.");
+  const nicole = await prisma.brand.upsert({
+    where: { name: 'Nicole' },
+    update: {},
+    create: { name: 'Nicole' },
+  });
 
+  const obermain = await prisma.brand.upsert({
+    where: { name: 'Obermain' },
+    update: {},
+    create: { name: 'Obermain' },
+  });
+
+  // Example: Inserting Real Products with actual SKUs
+  await prisma.product.upsert({
+    where: { sku: '42221361593' },
+    update: {},
+    create: {
+      sku: '42221361593',
+      name: "Hush Puppies Men's Premium Leather Bi-fold Wallet",
+      brandId: hushPuppies.id,
+    },
+  });
+
+  console.log('Real product catalog seeded successfully.');
 }
 
 main()
-.catch(console.error)
-.finally(async()=>{
-
-await prisma.$disconnect();
-
-});
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

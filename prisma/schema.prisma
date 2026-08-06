@@ -7,6 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model MarketplaceBrandMapping {
+  id           String   @id @default(cuid())
+  marketplace  String   // "SHOPEE" or "LAZADA"
+  storeId      String   // Store or Seller ID (e.g., "1000055891")
+  brandName    String   // Real brand name (e.g., "RAV", "Nicole", "OBERMAIN", "HUSH PUPPIES", "BHPC")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([marketplace, storeId])
+}
+
 model Company {
   id             String          @id @default(cuid())
   name           String
@@ -22,16 +33,17 @@ model Company {
 }
 
 model Brand {
-  id          String     @id @default(cuid())
-  name        String
-  companyId   String
-  code        String     @unique
-  createdAt   DateTime   @default(now())
-  description String?
-  updatedAt   DateTime   @updatedAt
-  AIProfile   AIProfile?
-  company     Company    @relation(fields: [companyId], references: [id])
-  products    Product[]
+  id             String           @id @default(cuid())
+  name           String
+  companyId      String
+  code           String           @unique
+  createdAt      DateTime         @default(now())
+  description    String?
+  updatedAt      DateTime         @updatedAt
+  AIProfile      AIProfile?
+  company        Company          @relation(fields: [companyId], references: [id])
+  products       Product[]
+  shopeeAccounts ShopeeAccount[]  // <--- Opposite relation added
 }
 
 model Category {
@@ -59,33 +71,33 @@ model Store {
 }
 
 model Product {
-  id           String       @id @default(cuid())
-  sku          String       @unique
+  id           String      @id @default(cuid())
+  sku          String      @unique
   name         String
   price        Float
-  stock        Int          @default(0)
+  stock        Int         @default(0)
   brandId      String
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  barcode      String?      @unique
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  barcode      String?     @unique
   description  String?
   categoryId   String?
-  costPrice    Float        @default(0)
+  costPrice    Float       @default(0)
   height       Float?
   image        String?
   length       Float?
   maxStock     Int?
-  minStock     Int          @default(5)
-  status       String       @default("ACTIVE")
+  minStock     Int         @default(5)
+  status       String      @default("ACTIVE")
   weight       Float?
   width        Float?
   companyId    String?
   lastSync     DateTime?
-  marketplace  Marketplace  @default(SHOPEE)
+  marketplace  Marketplace @default(SHOPEE)
   shopeeItemId BigInt?
-  brand        Brand        @relation(fields: [brandId], references: [id])
-  category     Category?    @relation(fields: [categoryId], references: [id])
-  Company      Company?     @relation(fields: [companyId], references: [id])
+  brand        Brand       @relation(fields: [brandId], references: [id])
+  category     Category?   @relation(fields: [categoryId], references: [id])
+  Company      Company?    @relation(fields: [companyId], references: [id])
 }
 
 model Customer {
@@ -107,7 +119,7 @@ model Order {
 }
 
 model User {
-    id        String    @id @default(cuid())
+  id        String    @id @default(cuid())
   name      String?
   email     String    @unique
   password  String
@@ -178,11 +190,13 @@ model AIProfile {
 model ShopeeAccount {
   id           String   @id @default(cuid())
   shopId       BigInt   @unique
+  brandId      String?  
   accessToken  String
   refreshToken String
   expireIn     Int
-  updatedAt    DateTime @updatedAt
+  brand        Brand?   @relation(fields: [brandId], references: [id])
   createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model LazadaAccount {

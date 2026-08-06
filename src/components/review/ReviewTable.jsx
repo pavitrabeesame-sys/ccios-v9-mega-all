@@ -1,778 +1,90 @@
-"use client";
-
-import { useState } from "react";
-import StatusBadge from "./StatusBadge";
-import ReplyEditor from "./ReplyApproval/ReplyEditor";
-
-
-export default function ReviewTable({
-
-  reviews = [],
-  refresh,
-  selected = [],
-  setSelected
-
-}) {
-
-
-const [activeReply,setActiveReply] = useState(null);
-
-
-
-function toggleSelect(id){
-
-if(selected.includes(id)){
-
-setSelected(
-selected.filter(
-item=>item!==id
-)
-);
-
-}else{
-
-setSelected([
-...selected,
-id
-]);
-
-}
-
-}
-
-
-
-
-
-function toggleAll(){
-
-if(selected.length===reviews.length){
-
-setSelected([]);
-
-}else{
-
-setSelected(
-reviews.map(
-r=>r.id
-)
-);
-
-}
-
-}
-
-
-
-
-
-
-async function generate(id){
-
-try{
-
-const res = await fetch(
-"/api/reviews/generate",
-{
-method:"POST",
-headers:{
-"Content-Type":"application/json"
-},
-body:JSON.stringify({
-id
-})
-}
-);
-
-
-const data = await res.json();
-
-
-if(!res.ok){
-
-throw new Error(
-data.error || "Generate failed"
-);
-
-}
-
-
-refresh?.();
-
-
-}catch(error){
-
-alert(error.message);
-
-}
-
-}
-
-
-
-
-
-
-
-async function analyze(id){
-
-try{
-
-
-await fetch(
-"/api/reviews/analyze",
-{
-
-method:"POST",
-
-headers:{
-"Content-Type":"application/json"
-},
-
-body:JSON.stringify({
-id
-})
-
-}
-);
-
-
-refresh?.();
-
-
-}catch(error){
-
-alert(error.message);
-
-}
-
-}
-
-
-
-
-
-
-
-async function approve(id){
-
-await fetch(
-"/api/reviews/approve",
-{
-
-method:"POST",
-
-headers:{
-"Content-Type":"application/json"
-},
-
-body:JSON.stringify({
-id
-})
-
-}
-);
-
-
-refresh?.();
-
-}
-
-
-
-
-
-
-
-
-async function reject(id){
-
-await fetch(
-"/api/reviews/reject",
-{
-
-method:"POST",
-
-headers:{
-"Content-Type":"application/json"
-},
-
-body:JSON.stringify({
-id
-})
-
-}
-);
-
-
-refresh?.();
-
-}
-
-
-
-
-
-
-
-
-
-async function replyShopee(id){
-
-try{
-
-
-const review =
-reviews.find(
-r=>r.id===id
-);
-
-
-
-if(!review){
-
-throw new Error(
-"Review not found"
-);
-
-}
-
-
-
-
-if(!review.aiReply){
-
-throw new Error(
-"Generate AI reply first"
-);
-
-}
-
-
-
-
-const res = await fetch(
-"/api/shopee/reply-comment",
-{
-
-method:"POST",
-
-headers:{
-"Content-Type":"application/json"
-},
-
-body:JSON.stringify({
-
-commentId:
-review.reviewId,
-
-comment:
-review.aiReply
-
-})
-
-}
-
-);
-
-
-
-const data =
-await res.json();
-
-
-
-if(!res.ok){
-
-throw new Error(
-data.error ||
-"Shopee reply failed"
-);
-
-}
-
-
-
-alert(
-"Shopee reply sent successfully"
-);
-
-
-refresh?.();
-
-
-
-}catch(error){
-
-alert(
-error.message
-);
-
-}
-
-
-}
-
-
-
-
-
-
-
-
-return (
-
-<div className="bg-white rounded-xl shadow overflow-hidden mt-6">
-
-
-<table className="w-full">
-
-
-<thead className="bg-slate-100">
-
-<tr>
-
-
-<th className="p-3">
-
-<input
-
-type="checkbox"
-
-checked={
-selected.length===reviews.length &&
-reviews.length>0
-}
-
-onChange={toggleAll}
-
-/>
-
-</th>
-
-
-
-<th className="p-3 text-left">
-Customer
-</th>
-
-
-
-<th className="p-3 text-left">
-Marketplace
-</th>
-
-
-
-<th className="p-3 text-left">
-Product
-</th>
-
-
-
-<th className="p-3 text-left">
-Rating
-</th>
-
-
-
-<th className="p-3 text-left">
-Review
-</th>
-
-
-
-<th className="p-3 text-left">
-Status
-</th>
-
-
-
-<th className="p-3 text-left">
-Action
-</th>
-
-
-
-</tr>
-
-</thead>
-
-
-
-
-
-<tbody>
-
-
-{
-reviews.map((r)=>(
-
-
-<>
-
-<tr
-key={r.id}
-className="border-t align-top"
->
-
-
-<td className="p-3">
-
-<input
-
-type="checkbox"
-
-checked={
-selected.includes(r.id)
-}
-
-onChange={()=>
-toggleSelect(r.id)
-}
-
-/>
-
-</td>
-
-
-
-
-
-<td className="p-3">
-
-{r.customerName}
-
-</td>
-
-
-
-
-
-<td className="p-3">
-
-<span className="
-px-3
-py-1
-rounded-full
-text-xs
-bg-blue-100
-text-blue-700
-">
-
-{r.marketplace}
-
-</span>
-
-</td>
-
-
-
-
-
-<td className="p-3">
-
-<div className="font-semibold">
-
-{r.productName || "Unknown Product"}
-
-</div>
-
-
-<div className="text-xs text-gray-500">
-
-SKU:
-{r.productSku || "-"}
-
-</div>
-
-
-
-{r.productBrand && (
-
-<div className="
-text-xs
-text-blue-600
-mt-1
-">
-
-Brand:
-{" "}
-{r.productBrand}
-
-</div>
-
-)}
-
-
-
-{r.productCategory && (
-
-<div className="
-text-xs
-text-purple-600
-mt-1
-">
-
-Category:
-{" "}
-{r.productCategory}
-
-</div>
-
-)}
-
-
-</td>
-
-
-
-
-
-
-<td className="p-3">
-
-{"⭐".repeat(
-r.rating || 0
-)}
-
-</td>
-
-
-
-
-
-
-<td className="p-3 max-w-xl">
-
-
-<div>
-
-{
-r.reviewText ||
-"No review text"
-}
-
-</div>
-
-
-
-
-
-
-{r.aiReply && (
-
-<div className="
-mt-3
-bg-green-50
-border
-border-green-300
-rounded-lg
-p-3
-">
-
-
-<div className="
-font-semibold
-text-green-700
-">
-
-AI Reply
-
-</div>
-
-
-<div>
-
-{r.aiReply}
-
-</div>
-
-
-<button
-
-onClick={()=>setActiveReply(r)}
-
-className="
-mt-2
-bg-blue-600
-text-white
-px-3
-py-1
-rounded
-"
-
->
-
-Edit Reply
-
-</button>
-
-
-</div>
-
-)}
-
-
-
-
-
-{r.sentiment && (
-
-<div className="text-xs mt-2">
-
-Sentiment:
-<b>
-{r.sentiment}
-</b>
-
-</div>
-
-)}
-
-
-
-</td>
-
-
-
-
-
-
-
-<td className="p-3">
-
-<StatusBadge
-status={r.status}
-/>
-
-</td>
-
-
-
-
-
-
-
-
-<td className="p-3">
-
-
-<div className="flex flex-col gap-2">
-
-
-
-<button
-onClick={()=>generate(r.id)}
-className="bg-purple-600 text-white px-3 py-2 rounded"
->
-AI Generate
-</button>
-
-
-
-
-<button
-onClick={()=>analyze(r.id)}
-className="bg-indigo-600 text-white px-3 py-2 rounded"
->
-Analyze
-</button>
-
-
-
-
-<button
-onClick={()=>approve(r.id)}
-className="bg-green-600 text-white px-3 py-2 rounded"
->
-Approve
-</button>
-
-
-
-
-<button
-onClick={()=>reject(r.id)}
-className="bg-red-600 text-white px-3 py-2 rounded"
->
-Reject
-</button>
-
-
-
-
-<button
-onClick={()=>replyShopee(r.id)}
-className="bg-blue-600 text-white px-3 py-2 rounded"
->
-Reply Shopee
-</button>
-
-
-
-</div>
-
-
-</td>
-
-
-
-</tr>
-
-
-
-
-
-{
-activeReply?.id===r.id && (
-
-<tr>
-
-<td colSpan="8" className="p-4">
-
-<ReplyEditor
-
-review={r}
-
-refresh={()=>{
-
-setActiveReply(null);
-
-refresh?.();
-
-}}
-
-/>
-
-</td>
-
-</tr>
-
-)
-
-}
-
-
-
-
-</>
-
-
-))
-}
-
-
-
-</tbody>
-
-
-</table>
-
-
-</div>
-
-);
-
-
+export default function ReviewTable({ reviews = [], onAction }) {
+  return (
+    <div className="overflow-x-auto bg-white rounded-lg shadow">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Marketplace</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Brand</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Name & SKU</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rating</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Review & AI Reply</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+          </tr>
+        </thead>
+        <tbody className="bg-white divide-y divide-gray-200">
+          {(!reviews || reviews.length === 0) ? (
+            <tr>
+              <td colSpan="8" className="px-6 py-8 text-center text-sm text-gray-500">
+                No reviews found.
+              </td>
+            </tr>
+          ) : (
+            reviews.map((review) => (
+              <tr key={review.id || review.reviewId} className="align-top">
+                {/* Customer */}
+                <td className="px-4 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">
+                  {review.customerName || '—'}
+                </td>
+
+                {/* Marketplace */}
+                <td className="px-4 py-4 whitespace-nowrap">
+                  <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                    {review.marketplace || 'SHOPEE'}
+                  </span>
+                </td>
+
+                {/* Brand */}
+                <td className="px-4 py-4 text-sm font-semibold text-gray-900 whitespace-nowrap">
+                  {review.brand || '—'}
+                </td>
+
+                {/* Product Name & SKU */}
+                <td className="px-4 py-4 text-sm max-w-xs">
+                  <div className="font-medium text-gray-900">{review.productName || '—'}</div>
+                  <div className="text-xs text-gray-400 mt-1">SKU: {review.productSku || '—'}</div>
+                </td>
+
+                {/* Rating */}
+                <td className="px-4 py-4 whitespace-nowrap text-sm text-yellow-500">
+                  {'★'.repeat(review.rating || 5)}{'☆'.repeat(5 - (review.rating || 5))}
+                </td>
+
+                {/* Review Text & AI Reply */}
+                <td className="px-4 py-4 text-sm text-gray-900 max-w-sm">
+                  <div className="text-gray-700">{review.reviewText || "No review text"}</div>
+                  {review.aiReply && (
+                    <div className="mt-2 p-2.5 bg-green-50 border border-green-200 rounded text-xs text-green-900">
+                      <span className="font-semibold block mb-0.5">AI Reply:</span> 
+                      <p>{review.aiReply}</p>
+                    </div>
+                  )}
+                </td>
+
+                {/* Status */}
+                <td className="px-4 py-4 whitespace-nowrap">
+                  <span className="px-2.5 py-1 inline-flex text-xs leading-4 font-semibold rounded-full bg-gray-100 text-gray-800">
+                    {review.status || 'GENERATED'}
+                  </span>
+                </td>
+
+                {/* Action Buttons */}
+                <td className="px-4 py-4 text-right whitespace-nowrap">
+                  <div className="flex flex-col gap-1.5 w-28 ml-auto">
+                    <button onClick={() => onAction?.('generate', review.id)} className="w-full px-2 py-1 bg-purple-600 text-white rounded text-xs hover:bg-purple-700 transition">AI Generate</button>
+                    <button onClick={() => onAction?.('analyze', review.id)} className="w-full px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 transition">Analyze</button>
+                    <button onClick={() => onAction?.('approve', review.id)} className="w-full px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 transition">Approve</button>
+                    <button onClick={() => onAction?.('reject', review.id)} className="w-full px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700 transition">Reject</button>
+                    <button onClick={() => onAction?.('reply', review.id)} className="w-full px-2 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 transition">Reply Shopee</button>
+                  </div>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
 }

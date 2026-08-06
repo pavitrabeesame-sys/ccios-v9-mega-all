@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import ProductModal from "../../src/components/products/ProductModal";
 import ProductTable from "../../src/components/products/ProductTable";
-import Button from "../../src/components/ui/Button"
+import Button from "../../src/components/ui/Button";
 import ProductStats from "../../src/components/products/ProductStats";
 
 export default function ProductsPage() {
@@ -70,25 +70,13 @@ export default function ProductsPage() {
 
   return (
     <div className="p-10">
-
       <div className="flex justify-between items-center mb-6">
-
         <div>
-
-          <h1 className="text-3xl font-bold">
-            Product Management
-          </h1>
-
-          <p className="text-gray-500">
-            Manage your product catalog
-          </p>
-
+          <h1 className="text-3xl font-bold">Product Management</h1>
+          <p className="text-gray-500">Manage your product catalog</p>
         </div>
 
-        <Button onClick={() => setOpen(true)}>
-          + New Product
-        </Button>
-
+        <Button onClick={() => setOpen(true)}>+ New Product</Button>
       </div>
 
       <input
@@ -101,11 +89,9 @@ export default function ProductsPage() {
         }}
       />
 
-<ProductStats products={products} />
-      <ProductTable
-        products={products}
-        onDelete={deleteProduct}
-      />
+      <ProductStats products={products} />
+
+      <ProductTable products={products} onDelete={deleteProduct} />
 
       <ProductModal
         open={open}
@@ -113,7 +99,9 @@ export default function ProductsPage() {
         brands={brands}
         onSave={saveProduct}
       />
-
+      
     </div>
+
   );
+
 }

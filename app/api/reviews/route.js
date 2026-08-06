@@ -1,121 +1,119 @@
-import { PrismaClient } from "@prisma/client";
+import { NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+
+export const dynamic = 'force-dynamic';
 
 const prisma = new PrismaClient();
+
+// Corrected store/seller ID mapping matching your multi-brand accounts
+const storeBrandMap = {
+  "1000055891": "RAV Design",
+  "100164017": "Nicole Collection",
+  "300749392344": "Obermain",
+  "300763632066": "Hush Puppies",
+  "300934544102": "BHPC",
+};
 
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const search = searchParams.get("search") || "";
-    const status = searchParams.get("status");
+    const search = searchParams.get('search') || '';
+    const status = searchParams.get('status') || '';
+    const selectedBrand = searchParams.get('brand') || '';
+    const selectedPlatform = searchParams.get('platform') || '';
 
-    // Build dynamic where clause for Prisma
-    const where = {};
-
-    if (status) {
-      where.status = status;
-    }
-
+    let whereClause = {};
     if (search) {
-      where.OR = [
-        {
-          customerName: {
-            contains: search,
-            mode: "insensitive"
-          }
-        },
-        {
-          productName: {
-            contains: search,
-            mode: "insensitive"
-          }
-        },
-        {
-          productSku: {
-            contains: search,
-            mode: "insensitive"
-          }
-        },
-        {
-          reviewText: {
-            contains: search,
-            mode: "insensitive"
-          }
-        }
+      whereClause.OR = [
+        { customerName: { contains: search, mode: 'insensitive' } },
+        { productSku: { contains: search, mode: 'insensitive' } },
+        { sku: { contains: search, mode: 'insensitive' } },
+        { productName: { contains: search, mode: 'insensitive' } },
       ];
     }
+    if (status && status !== 'ALL') {
+      whereClause.status = status;
+    }
+    if (selectedPlatform && selectedPlatform !== 'ALL') {
+      whereClause.marketplace = { contains: selectedPlatform, mode: 'insensitive' };
+    }
 
-    const reviews = await prisma.review.findMany({
-      where,
-      orderBy: {
-        createdAt: "desc"
-      }
+    // Fetch all matching reviews from database
+    const rawReviews = await prisma.review.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
     });
 
-    const formattedReviews = await Promise.all(
-      reviews.map(async (review) => {
-        let productName = review.productName;
-        let productInfo = null;
+    // Map each review to its real product and brand data
+    const reviews = await Promise.all(
+      rawReviews.map(async (reviewItem) => {
+        let brandName = reviewItem.brand;
+        let productName = reviewItem.productName || reviewItem.name;
+        const cleanSku = (reviewItem.productSku || reviewItem.sku || '').trim();
 
-        // FIND PRODUCT USING SKU
-        if (review.productSku) {
-          productInfo = await prisma.product.findUnique({
-            where: {
-              sku: review.productSku
-            },
-            include: {
-              brand: true,
-              category: true
-            }
-          });
-
+        // 1. Check if the review's current brand or shop reference matches our store map
+        for (const [storeId, mappedBrand] of Object.entries(storeBrandMap)) {
           if (
-            (!productName || productName.trim() === "")
-            && productInfo
+            (reviewItem.brand && reviewItem.brand.includes(storeId)) ||
+            (reviewItem.shopId && String(reviewItem.shopId).includes(storeId)) ||
+            (reviewItem.storeId && String(reviewItem.storeId).includes(storeId))
           ) {
-            productName = productInfo.name;
+            brandName = mappedBrand;
+            break;
           }
         }
 
+        // 2. Check Product table relation using SKU if brand is still unassigned
+        if (cleanSku && (!brandName || brandName === '—' || brandName.startsWith('Store_'))) {
+          try {
+            const productInfo = await prisma.product.findFirst({
+              where: { 
+                sku: { 
+                  equals: cleanSku, 
+                  mode: 'insensitive' 
+                } 
+              },
+              include: { brand: true },
+            });
+
+            if (productInfo) {
+              if (productInfo.brand && productInfo.brand.name) {
+                brandName = productInfo.brand.name;
+              }
+              if (productInfo.name && productInfo.name.trim() !== '') {
+                productName = productInfo.name;
+              }
+            }
+          } catch (err) {
+            console.error("Product lookup error for SKU:", cleanSku, err.message);
+          }
+        }
+
+        const finalBrand = (brandName && brandName.trim() !== '' && brandName !== '—' && !brandName.startsWith('Store_')) 
+          ? brandName.trim() 
+          : 'Unassigned';
+
         return {
-          // ORIGINAL REVIEW DATA
-          id: review.id,
-          reviewId: review.reviewId,
-          marketplace: review.marketplace,
-          customerName: review.customerName || "Unknown Customer",
-          rating: review.rating,
-          reviewText: review.reviewText || "No review text",
-          aiReply: review.aiReply,
-          finalReply: review.finalReply,
-          status: review.status || "PENDING",
-          createdAt: review.createdAt,
-
-          // PRODUCT DATA
-          productName: productName || `SKU: ${review.productSku || "Unknown"}`,
-          productSku: review.productSku || "-",
-
-          // PRODUCT INTELLIGENCE & BRAND
-          productId: productInfo?.id || null,
-          brand: productInfo?.brand?.name || null, // Mapped for CCIOS UI tags
-          productCategory: productInfo?.category?.name || null,
-          productPrice: productInfo?.price || 0,
-          productStock: productInfo?.stock || 0,
-          shopeeItemId: productInfo?.shopeeItemId
-            ? productInfo.shopeeItemId.toString()
-            : null,
-          productMarketplace: productInfo?.marketplace || review.marketplace,
-          lastSync: productInfo?.lastSync || null
+          ...reviewItem,
+          productSku: cleanSku,
+          brand: finalBrand,
+          productName: productName || `SKU: ${cleanSku || 'N/A'}`,
         };
       })
     );
 
-    return Response.json({
-      reviews: formattedReviews
+    // Flexible filtering by selected brand
+    const filteredReviews = reviews.filter((item) => {
+      if (!selectedBrand || selectedBrand === 'ALL') return true;
+      return item.brand.toLowerCase() === selectedBrand.toLowerCase() ||
+             item.brand.toLowerCase().includes(selectedBrand.toLowerCase());
     });
 
+    return NextResponse.json({ success: true, reviews: filteredReviews });
   } catch (error) {
     console.error("REVIEWS API ERROR:", error);
-    return Response.json(
-      { error: error.message },
+    return NextResponse.json(
+      { success: false, error: error.message },
       { status: 500 }
     );
   }

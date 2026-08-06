@@ -2,104 +2,93 @@ import { NextResponse } from "next/server";
 import { prisma } from "../../../src/lib/prisma";
 
 export async function GET(request) {
-
   const { searchParams } = new URL(request.url);
 
   const search = searchParams.get("search") || "";
-
   const category = searchParams.get("category") || "";
-
   const status = searchParams.get("status") || "";
+  const marketplace = searchParams.get("marketplace") || "";
+  const brandName = searchParams.get("brand") || "";
 
   const products = await prisma.product.findMany({
-
-    where:{
-
-      AND:[
-
+    where: {
+      AND: [
         search
-        ?{
-          OR:[
-            {name:{contains:search,mode:"insensitive"}},
-            {sku:{contains:search,mode:"insensitive"}}
-          ]
-        }
-        :{},
+          ? {
+              OR: [
+                { name: { contains: search, mode: "insensitive" } },
+                { sku: { contains: search, mode: "insensitive" } },
+              ],
+            }
+          : {},
 
         category
-        ?{
-          category
-        }
-        :{},
+          ? {
+              category,
+            }
+          : {},
 
         status
-        ?{
-          status
-        }
-        :{}
+          ? {
+              status,
+            }
+          : {},
 
-      ]
+        marketplace && marketplace !== "ALL"
+          ? {
+              marketplace,
+            }
+          : {},
 
+        brandName && brandName !== "ALL"
+          ? {
+              brand: {
+                name: {
+                  equals: brandName,
+                  mode: "insensitive",
+                },
+              },
+            }
+          : {},
+      ],
     },
 
-    include:{
-      brand:true
+    include: {
+      brand: true,
     },
 
-    orderBy:{
-      createdAt:"desc"
-    }
-
+    orderBy: {
+      createdAt: "desc",
+    },
   });
 
   return NextResponse.json({
-
-    success:true,
-
-    data:products
-
+    success: true,
+    data: products,
   });
-
 }
 
-export async function POST(request){
+export async function POST(request) {
+  const body = await request.json();
 
-  const body=await request.json();
-
-  const product=await prisma.product.create({
-
-    data:{
-
-      sku:body.sku,
-
-      barcode:body.barcode,
-
-      name:body.name,
-
-      description:body.description,
-
-      price:Number(body.price),
-
-      stock:Number(body.stock),
-
-      category:body.category,
-
-      status:body.status,
-
-      image:body.image,
-
-      brandId:body.brandId
-
-    }
-
+  const product = await prisma.product.create({
+    data: {
+      sku: body.sku,
+      barcode: body.barcode,
+      name: body.name,
+      description: body.description,
+      price: Number(body.price),
+      stock: Number(body.stock),
+      category: body.category,
+      status: body.status,
+      image: body.image,
+      brandId: body.brandId,
+    },
   });
 
   return NextResponse.json({
-
-    success:true,
-
-    data:product
-
+    success: true,
+    data: product,
   });
-
+  
 }
