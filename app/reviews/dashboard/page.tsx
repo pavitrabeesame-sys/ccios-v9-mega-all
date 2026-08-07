@@ -142,7 +142,7 @@ export default function ReviewsPage() {
               No reviews found for this filter.
             </div>
           ) : (
-            filteredReviews.main?.map ? [] : filteredReviews.map((review, idx) => (
+            filteredReviews.map((review, idx) => (
               <div
                 key={review.reviewId || idx}
                 onClick={() => setSelectedReview(review)}
