@@ -4,10 +4,10 @@ import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
-const SHOP\_BRANDS: Record\<string, string> = {
+const SHOP_BRANDS: Record<string, string> = {
 "74401016": "RAV",
 "115383763": "RAV",
-"170808053": "JOHN\_LANGFORD",
+"170808053": "JOHN_LANGFORD",
 "170811257": "BHPC",
 "282544493": "HUSH",
 "469553987": "OBERMAIN",
@@ -23,7 +23,7 @@ const SHOP\_BRANDS: Record\<string, string> = {
 async function refreshAccessToken(partnerId: string, partnerKey: string, refreshToken: string, shopId: number) {
 try {
 const timestamp = Math.floor(Date.now() / 1000);
-const path = '/api/v2/auth/access\_token/get';
+const path = '/api/v2/auth/access_token/get';
 const baseString = `${partnerId}${path}${timestamp}`;
 const sign = crypto.createHmac('sha256', partnerKey).update(baseString).digest('hex');
 const url = `https://partner.shopeemobile.com${path}?partner_id=${partnerId}&timestamp=${timestamp}&sign=${sign}`;
@@ -48,8 +48,8 @@ return null;
 
 export async function POST(request: Request) {
 try {
-const partnerId = process.env.SHOPEE\_PARTNER\_ID;
-const partnerKey = process.env.SHOPEE\_PARTNER\_KEY;
+const partnerId = process.env.SHOPEE_PARTNER_ID;
+const partnerKey = process.env.SHOPEE_PARTNER_KEY;
 
 ```
 if (!partnerId || !partnerKey) {
