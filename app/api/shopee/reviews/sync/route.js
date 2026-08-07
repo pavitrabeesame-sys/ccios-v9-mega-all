@@ -6,13 +6,13 @@ const prisma = new PrismaClient();
 export const dynamic = 'force-dynamic';
 export async function POST(request) {
   try {
-    // Shopee Open API review synchronization logic
     const shopeeLiveReviews = [
       {
         reviewId: `shopee_${Date.now()}_1`,
         marketplace: 'SHOPEE',
         brand: 'Nicole',
         productName: 'Nicole Classic Apparel',
+        storeName: 'Nicole Official Store',
         customerName: 'minniemouse_x',
         rating: 5,
         reviewText: 'Love the functional pockets :)',
@@ -23,6 +23,7 @@ export async function POST(request) {
         marketplace: 'SHOPEE',
         brand: 'Obermain',
         productName: 'Obermain Leather Wallet',
+        storeName: 'Obermain Official Store',
         customerName: 'wan_hadi90',
         rating: 5,
         reviewText: 'Super premium material and fast delivery!',
@@ -45,6 +46,7 @@ export async function POST(request) {
             marketplace: rev.marketplace,
             brand: rev.brand,
             productName: rev.productName,
+            storeName: rev.storeName, // Included storeName here
             customerName: rev.customerName,
             rating: rev.rating,
             reviewText: rev.reviewText,
