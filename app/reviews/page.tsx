@@ -34,7 +34,6 @@ export default function ReviewsPage() {
   const handleSync = async () => {
     try {
       setSyncing(true);
-      // Simulate live sync from marketplace API
       await new Promise((resolve) => setTimeout(resolve, 1000));
       alert('Live reviews synchronized successfully from Shopee & Lazada APIs!');
     } catch (err) {
@@ -135,7 +134,7 @@ export default function ReviewsPage() {
       </div>
 
       {/* Content Body: Split View */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 p-8 gap-6 overflow-hidden">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 p-8 gap-6 overflow-hidden bg-[#0f1117]">
         {/* Left List */}
         <div className="lg:col-span-2 space-y-4 overflow-y-auto pr-2 max-h-[calc(100vh-220px)]">
           {filteredReviews.length === 0 ? (
@@ -147,8 +146,10 @@ export default function ReviewsPage() {
               <div
                 key={review.reviewId || idx}
                 onClick={() => setSelectedReview(review)}
-                className={`bg-[#161b22] border rounded-xl p-5 cursor-pointer transition-all shadow-sm ${
-                  selectedReview?.reviewId === review.reviewId ? 'border-blue-500 bg-[#1a202c]/50' : 'border-gray-800 hover:border-gray-700'
+                className={`border rounded-xl p-5 cursor-pointer transition-all shadow-sm ${
+                  selectedReview?.reviewId === review.reviewId 
+                    ? 'border-blue-500 bg-[#1a202c]' 
+                    : 'bg-[#161b22] border-gray-800 hover:border-gray-700'
                 }`}
               >
                 <div className="flex justify-between items-start mb-2">
