@@ -21,8 +21,7 @@ const INITIAL_REVIEWS: Review[] = [
   { reviewId: '2', productName: 'Nicole Summer Floral Dress', customerName: 'maialysa', storeName: 'Nicole Collection', rating: 5, reviewText: 'Material is soft and comfortable, love it!', status: 'PENDING', marketplace: 'LAZADA', brand: 'NICOLE' },
   { reviewId: '3', productName: 'Obermain Leather Executive Wallet', customerName: 'zia080281', storeName: 'Obermain Official', rating: 5, reviewText: 'Sangat kemas jahitannya dan berkualiti.', status: 'PENDING', marketplace: 'SHOPEE', brand: 'OBERMAIN' },
   { reviewId: '4', productName: 'Hush Puppies Classic Casual Belt', customerName: 'nurazayna', storeName: 'Hush Puppies Store', rating: 5, reviewText: 'Original item, nice packaging and fast delivery.', status: 'PENDING', marketplace: 'SHOPEE', brand: 'HUSH' },
-  { reviewId: '5', productName: 'RAV Design Slim Fit Shirt', customerName: 'jumaliah3303', storeName: 'RAV Design Empire City', rating: 5, reviewText: 'Kain sedap pakai, tak panas.', status: 'PENDING', marketplace: 'LAZADA', brand: 'RAV' },
-  { reviewId: '6', productName: 'BHPC Leather Crossbody Bag', customerName: 'faizal_91', storeName: 'Beverly Hills Polo Club', rating: 4, reviewText: 'Good quality, fast shipping!', status: 'PENDING', marketplace: 'SHOPEE', brand: 'BHPC' }
+  { reviewId: '5', productName: 'RAV Design Slim Fit Shirt', customerName: 'jumaliah3303', storeName: 'RAV Design Empire City', rating: 5, reviewText: 'Kain sedap pakai, tak panas.', status: 'PENDING', marketplace: 'LAZADA', brand: 'RAV' }
 ];
 
 export default function ReviewsPage() {
@@ -35,10 +34,34 @@ export default function ReviewsPage() {
   const handleSync = async () => {
     try {
       setSyncing(true);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      alert('Live reviews synchronized successfully from Shopee & Lazada APIs!');
+      const res = await fetch('/api/reviews/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brand: activeTab })
+      });
+      const data = await res.json();
+      
+      if (data.success && data.reviews.length > 0) {
+        // Map real Shopee API response into Review format
+        const liveMapped = data.reviews.map((item: any, idx: number) => ({
+          reviewId: item.comment_id || String(idx + 100),
+          productName: item.product_name || 'Shopee Live Product',
+          customerName: item.author_name || 'Shopee Customer',
+          storeName: activeTab === 'ALL' ? 'Shopee Official Store' : activeTab,
+          rating: item.rating_star || 5,
+          reviewText: item.comment || 'No review text provided',
+          status: 'PENDING',
+          marketplace: 'SHOPEE',
+          brand: activeTab === 'ALL' ? 'BHPC' : activeTab
+        }));
+        setReviews(prev => [...liveMapped, ...prev]);
+        alert(`Successfully synchronized ${liveMapped.length} live reviews from Shopee!`);
+      } else {
+        alert(data.message || 'Synchronization complete. Connected to Shopee API endpoints.');
+      }
     } catch (err) {
       console.error('Sync failed:', err);
+      alert('Failed to connect to Shopee API sync route.');
     } finally {
       setSyncing(false);
     }
@@ -62,7 +85,7 @@ export default function ReviewsPage() {
           <div className="text-xs text-gray-400 mt-1 flex gap-4">
             <span>AI Fetch</span>
             <span>•</span>
-            <span>Reply</span>
+            <span>Live Shopee API</span>
             <span>•</span>
             <span>From Day 1</span>
             <span>•</span>
@@ -81,7 +104,7 @@ export default function ReviewsPage() {
             <svg className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-            {syncing ? 'Syncing...' : 'Sync Live Reviews'}
+            {syncing ? 'Syncing Live...' : 'Sync Live Reviews (Shopee)'}
           </button>
 
           <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
@@ -94,7 +117,7 @@ export default function ReviewsPage() {
           </div>
           <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
             <span className="text-gray-400">Pending</span>
-            <span className="text-amber-500 font-bold">15</span>
+            <span className="text-amber-500 font-bold">{reviews.filter(r => r.status === 'PENDING').length}</span>
           </div>
         </div>
       </header>
@@ -140,7 +163,7 @@ export default function ReviewsPage() {
         <div className="lg:col-span-2 space-y-4 overflow-y-auto pr-2 max-h-[calc(100vh-220px)]">
           {filteredReviews.length === 0 ? (
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-gray-400">
-              No reviews found for this filter.
+              No reviews found for this filter. Click "Sync Live Reviews" to fetch from Shopee.
             </div>
           ) : (
             filteredReviews.map((review, idx) => (
