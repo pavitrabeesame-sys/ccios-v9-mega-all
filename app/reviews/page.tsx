@@ -50,9 +50,9 @@ export default function ReviewsPage() {
   });
 
   return (
-    <div className="min-h-screen bg-[#0f1117] text-gray-100 flex flex-col flex-1">
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col flex-1">
       {/* Header Bar */}
-      <header className="border-b border-gray-800 px-8 py-4 flex items-center justify-between bg-[#121620]">
+      <header className="border-b border-gray-800 px-8 py-4 flex items-center justify-between bg-gray-900">
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold tracking-wide text-white">Reviews</h1>
@@ -83,15 +83,15 @@ export default function ReviewsPage() {
             {syncing ? 'Syncing...' : 'Sync Live Reviews'}
           </button>
 
-          <div className="bg-[#1a202c] px-3 py-2 rounded-lg border border-gray-800 text-xs flex items-center gap-2">
+          <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
             <span className="text-gray-400">Reply Rate</span>
             <span className="text-emerald-400 font-bold">94%</span>
           </div>
-          <div className="bg-[#1a202c] px-3 py-2 rounded-lg border border-gray-800 text-xs flex items-center gap-2">
+          <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
             <span className="text-gray-400">Avg</span>
             <span className="text-amber-400 font-bold">4.8★</span>
           </div>
-          <div className="bg-[#1a202c] px-3 py-2 rounded-lg border border-gray-800 text-xs flex items-center gap-2">
+          <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
             <span className="text-gray-400">Pending</span>
             <span className="text-amber-500 font-bold">15</span>
           </div>
@@ -99,7 +99,7 @@ export default function ReviewsPage() {
       </header>
 
       {/* Filter Bar */}
-      <div className="px-8 py-4 border-b border-gray-800 bg-[#121620] flex items-center justify-between">
+      <div className="px-8 py-4 border-b border-gray-800 bg-gray-900 flex items-center justify-between">
         <div className="flex gap-2">
           {['ALL', 'RAV', 'NICOLE', 'OBERMAIN', 'HUSH', 'BHPC'].map((brand) => (
             <button
@@ -108,7 +108,7 @@ export default function ReviewsPage() {
               className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === brand
                   ? 'bg-blue-600 text-white shadow-lg'
-                  : 'bg-[#1a202c] text-gray-400 hover:text-white border border-gray-800'
+                  : 'bg-gray-800 text-gray-400 hover:text-white border border-gray-700'
               }`}
             >
               {brand} {brand === 'ALL' && `(${reviews.length})`}
@@ -116,7 +116,7 @@ export default function ReviewsPage() {
           ))}
         </div>
 
-        <div className="flex gap-2 bg-[#1a202c] p-1 rounded-full border border-gray-800">
+        <div className="flex gap-2 bg-gray-800 p-1 rounded-full border border-gray-700">
           {['All', 'Shopee', 'Lazada'].map((mkt) => (
             <button
               key={mkt}
@@ -134,22 +134,22 @@ export default function ReviewsPage() {
       </div>
 
       {/* Content Body: Split View */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 p-8 gap-6 overflow-hidden bg-[#0f1117]">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 p-8 gap-6 overflow-hidden bg-gray-950">
         {/* Left List */}
         <div className="lg:col-span-2 space-y-4 overflow-y-auto pr-2 max-h-[calc(100vh-220px)]">
           {filteredReviews.length === 0 ? (
-            <div className="bg-[#161b22] border border-gray-800 rounded-xl p-6 text-gray-400">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-gray-400">
               No reviews found for this filter.
             </div>
           ) : (
-            filteredReviews.map((review, idx) => (
+            filteredReviews.main?.map ? [] : filteredReviews.map((review, idx) => (
               <div
                 key={review.reviewId || idx}
                 onClick={() => setSelectedReview(review)}
                 className={`border rounded-xl p-5 cursor-pointer transition-all shadow-sm ${
                   selectedReview?.reviewId === review.reviewId 
-                    ? 'border-blue-500 bg-[#1a202c]' 
-                    : 'bg-[#161b22] border-gray-800 hover:border-gray-700'
+                    ? 'border-blue-500 bg-gray-800' 
+                    : 'bg-gray-900 border-gray-800 hover:border-gray-700'
                 }`}
               >
                 <div className="flex justify-between items-start mb-2">
@@ -170,7 +170,7 @@ export default function ReviewsPage() {
         </div>
 
         {/* Right AI Generator Panel */}
-        <div className="bg-[#161b22] border border-gray-800 rounded-xl p-6 flex flex-col justify-between h-fit">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex flex-col justify-between h-fit">
           <div>
             <div className="flex items-center justify-between mb-4">
               <span className="text-xs font-bold tracking-wider text-purple-400 uppercase">✦ NOVA AI REPLY GENERATOR</span>
@@ -179,7 +179,7 @@ export default function ReviewsPage() {
 
             <div className="mb-4">
               <p className="text-xs text-gray-400 uppercase font-semibold mb-2">SELECTED REVIEW</p>
-              <div className="bg-[#0f1117] border border-gray-800 rounded-lg p-3 text-xs text-gray-300">
+              <div className="bg-gray-950 border border-gray-800 rounded-lg p-3 text-xs text-gray-300">
                 {selectedReview ? (
                   <>
                     <p className="italic mb-1 font-medium text-white">"{selectedReview.reviewText}"</p>
@@ -193,7 +193,7 @@ export default function ReviewsPage() {
 
             <div className="mb-4">
               <p className="text-xs text-gray-400 uppercase font-semibold mb-2">TONE</p>
-              <div className="bg-[#0f1117] border border-gray-800 rounded-lg p-2 text-xs text-white">
+              <div className="bg-gray-950 border border-gray-800 rounded-lg p-2 text-xs text-white">
                 {selectedReview?.storeName || 'Beverly Hills Polo Club'} Artisan rugged warm
               </div>
             </div>
@@ -204,7 +204,7 @@ export default function ReviewsPage() {
                 <textarea
                   readOnly
                   rows={3}
-                  className="w-full bg-[#0f1117] border border-gray-800 rounded-lg p-3 text-xs text-gray-200 resize-none outline-none"
+                  className="w-full bg-gray-950 border border-gray-800 rounded-lg p-3 text-xs text-gray-200 resize-none outline-none"
                   value={`Thank you so much for your wonderful feedback, ${selectedReview.customerName}! We're thrilled you love your new item. Looking forward to serving you again soon!`}
                 />
               </div>
