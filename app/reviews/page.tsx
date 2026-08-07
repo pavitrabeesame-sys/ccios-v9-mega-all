@@ -17,11 +17,12 @@ interface Review {
 }
 
 const INITIAL_REVIEWS: Review[] = [
-  { reviewId: '1', productName: 'Shopee Product 6073919565', customerName: 'hanapi_1987', storeName: 'Beverly Hills Polo Club', rating: 5, reviewText: 'Barang baik boss', status: 'PENDING', marketplace: 'SHOPEE', brand: 'BHPC' },
-  { reviewId: '2', productName: 'Shopee Product 7043935140', customerName: 'maialysa', storeName: 'Beverly Hills Polo Club', rating: 5, reviewText: 'Fast shipping and excellent quality!', status: 'PENDING', marketplace: 'SHOPEE', brand: 'BHPC' },
-  { reviewId: '3', productName: 'Shopee Product 7482218751', customerName: 'zia080281', storeName: 'Beverly Hills Polo Club', rating: 5, reviewText: 'Material is soft and comfortable.', status: 'PENDING', marketplace: 'SHOPEE', brand: 'BHPC' },
-  { reviewId: '4', productName: 'Shopee Product 5843805608', customerName: 'nurazayna', storeName: 'Beverly Hills Polo Club', rating: 5, reviewText: 'Original item, nice packaging.', status: 'PENDING', marketplace: 'SHOPEE', brand: 'BHPC' },
-  { reviewId: '5', productName: 'Shopee Product 8719767232', customerName: 'jumaliah3303', storeName: 'Beverly Hills Polo Club', rating: 5, reviewText: 'Sangat kemas jahitannya.', status: 'PENDING', marketplace: 'SHOPEE', brand: 'BHPC' }
+  { reviewId: '1', productName: 'BHPC Classic Polo Tee', customerName: 'hanapi_1987', storeName: 'Beverly Hills Polo Club', rating: 5, reviewText: 'Barang baik boss', status: 'PENDING', marketplace: 'SHOPEE', brand: 'BHPC' },
+  { reviewId: '2', productName: 'Nicole Summer Floral Dress', customerName: 'maialysa', storeName: 'Nicole Collection', rating: 5, reviewText: 'Material is soft and comfortable, love it!', status: 'PENDING', marketplace: 'LAZADA', brand: 'NICOLE' },
+  { reviewId: '3', productName: 'Obermain Leather Executive Wallet', customerName: 'zia080281', storeName: 'Obermain Official', rating: 5, reviewText: 'Sangat kemas jahitannya dan berkualiti.', status: 'PENDING', marketplace: 'SHOPEE', brand: 'OBERMAIN' },
+  { reviewId: '4', productName: 'Hush Puppies Classic Casual Belt', customerName: 'nurazayna', storeName: 'Hush Puppies Store', rating: 5, reviewText: 'Original item, nice packaging and fast delivery.', status: 'PENDING', marketplace: 'SHOPEE', brand: 'HUSH' },
+  { reviewId: '5', productName: 'RAV Design Slim Fit Shirt', customerName: 'jumaliah3303', storeName: 'RAV Design Empire City', rating: 5, reviewText: 'Kain sedap pakai, tak panas.', status: 'PENDING', marketplace: 'LAZADA', brand: 'RAV' },
+  { reviewId: '6', productName: 'BHPC Leather Crossbody Bag', customerName: 'faizal_91', storeName: 'Beverly Hills Polo Club', rating: 4, reviewText: 'Good quality, fast shipping!', status: 'PENDING', marketplace: 'SHOPEE', brand: 'BHPC' }
 ];
 
 export default function ReviewsPage() {
@@ -194,7 +195,7 @@ export default function ReviewsPage() {
             <div className="mb-4">
               <p className="text-xs text-gray-400 uppercase font-semibold mb-2">TONE</p>
               <div className="bg-gray-950 border border-gray-800 rounded-lg p-2 text-xs text-white">
-                {selectedReview?.storeName || 'Beverly Hills Polo Club'} Artisan rugged warm
+                {selectedReview?.storeName || 'Store'} Artisan rugged warm
               </div>
             </div>
 
@@ -205,7 +206,7 @@ export default function ReviewsPage() {
                   readOnly
                   rows={3}
                   className="w-full bg-gray-950 border border-gray-800 rounded-lg p-3 text-xs text-gray-200 resize-none outline-none"
-                  value={`Thank you so much for your wonderful feedback, ${selectedReview.customerName}! We're thrilled you love your new item. Looking forward to serving you again soon!`}
+                  value={`Thank you so much for your wonderful feedback, ${selectedReview.customerName}! We're thrilled you love your new item from ${selectedReview.storeName}. Looking forward to serving you again soon!`}
                 />
               </div>
             )}
