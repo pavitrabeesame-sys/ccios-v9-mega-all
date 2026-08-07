@@ -1,7 +1,10 @@
 import { prisma } from "@/src/lib/prisma";
 
-export default async function DashboardPage() {
+export const dynamic = 'force-dynamic';
 
+export default function DashboardPage() {
+  // Page component code...
+}
 
   const [
     companies,
