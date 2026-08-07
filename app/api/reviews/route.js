@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 
+// Force Next.js to treat this route as dynamic so it never tries to pre-render it statically
+export const dynamic = 'force-dynamic';
+
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
