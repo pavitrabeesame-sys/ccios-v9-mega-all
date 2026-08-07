@@ -1,143 +1,172 @@
-﻿export const dynamic = 'force-dynamic';
-
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
-import { resolveBrandName } from '@/src/lib/brandMapping';
+import crypto from 'crypto';
 
 const prisma = new PrismaClient();
 
-// Permanent store ID to Brand Name fallback mapping for Shopee stores
-const SHOPEE_STORE_BRAND_MAP = {
-  "1000055891": "RAV",
-  "100164017": "Nicole",
-  "300749392344": "Obermain",
-  "300763632066": "Hush Puppies",
-  "300934544102": "Beverly Hills Polo Club",
+const PARTNER_ID = process.env.SHOPEE_PARTNER_ID;
+const PARTNER_KEY = process.env.SHOPEE_PARTNER_KEY;
+const HOST = process.env.SHOPEE_HOST || "https://partner.shopeemobile.com";
+
+const SHOPEE_BRAND_MAPPING = {
+  "66854646": { name: "Nicole", code: "NICOLE" },
+  "190669704": { name: "Nicole", code: "NICOLE" },
+  "170808053": { name: "John Langford", code: "JOHN_LANGFORD" },
+  "170811257": { name: "Beverly Hills Polo Club", code: "BHPC" },
+  "1770621264": { name: "RAV", code: "RAV" },
+  "1770621271": { name: "RAV", code: "RAV" },
+  "115383763": { name: "RAV", code: "RAV" },
+  "74401016": { name: "RAV", code: "RAV" },
+  "1637647671": { name: "Obermain", code: "OBERMAIN" },
+  "1747523033": { name: "Obermain", code: "OBERMAIN" },
+  "1747523036": { name: "Obermain", code: "OBERMAIN" },
+  "469553987": { name: "Obermain", code: "OBERMAIN" },
+  "282544493": { name: "Hush Puppies", code: "HUSH_PUPPIES" },
 };
 
-// TODO: Replace this with your actual shopeeGet function call
-async function fetchShopeeProducts(accessToken, shopId) {
-  // Plug your actual Shopee API fetch logic here
-  // Should return an array of items: { item_id, name, price, stock, sku }
-  return [];
+function sign(baseString) {
+  return crypto.createHmac("sha256", PARTNER_KEY).update(baseString).digest("hex");
 }
 
-export async function POST(request) {
-  try {
-    console.log(`[Shopee Sync] Starting multi-store product sync...`);
+async function refreshAccessToken(account) {
+  const path = "/api/v2/auth/access_token/get";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const baseString = `${PARTNER_ID}${path}${timestamp}`;
+  const signature = sign(baseString);
+  const url = new URL(HOST + path);
+  url.searchParams.set("partner_id", PARTNER_ID);
+  url.searchParams.set("timestamp", timestamp);
+  url.searchParams.set("sign", signature);
 
-    const accounts = await prisma.shopeeAccount.findMany();
-
-    if (!accounts || accounts.length === 0) {
-      return NextResponse.json({
-        success: false,
-        message: 'No Shopee accounts found in database. Please authorize your stores first.',
-        syncedCount: 0,
-      }, { status: 400 });
-    }
-
-    let totalSynced = 0;
-    const results = [];
-
-    // Ensure parent company exists safely using unique field or lookup
-    let parentCompany = await prisma.company.findFirst({
-      where: { 
-        OR: [
-          { code: 'BST' },
-          { name: 'Bee Same Trading Sdn Bhd' }
-        ]
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      refresh_token: account.refreshToken || account.refresh_token,
+      shop_id: Number(account.shopId || account.partnerId),
+      partner_id: Number(PARTNER_ID)
+    }),
+  });
+  
+  const data = await res.json();
+  if (data.access_token) {
+    const updated = await prisma.shopeeAccount.update({
+      where: { id: account.id },
+      data: {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        updatedAt: new Date()
       }
     });
+    return updated.accessToken;
+  }
+  throw new Error(data.message || "Failed to refresh token");
+}
 
-    if (!parentCompany) {
-      parentCompany = await prisma.company.create({
-        data: {
-          code: 'BST',
-          name: 'Bee Same Trading Sdn Bhd',
-          description: 'Parent Company'
-        },
-      });
+async function shopeeFetchGet(account, path, params = {}) {
+  let accessToken = account.accessToken || account.access_token;
+  const shopId = String(account.shopId || account.partnerId);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const baseString = `${PARTNER_ID}${path}${timestamp}${accessToken}${shopId}`;
+    const signature = sign(baseString);
+
+    const url = new URL(HOST + path);
+    url.searchParams.set("partner_id", PARTNER_ID);
+    url.searchParams.set("timestamp", timestamp);
+    url.searchParams.set("sign", signature);
+    url.searchParams.set("access_token", accessToken);
+    url.searchParams.set("shop_id", shopId);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+
+    const res = await fetch(url.toString());
+    const data = await res.json();
+
+    if (data.error && (data.error.includes("access_token") || data.message?.includes("access_token")) && attempt === 0) {
+      accessToken = await refreshAccessToken(account);
+      continue;
     }
 
-    for (const account of accounts) {
-      const shopIdStr = String(account.shopId || account.sellerId || '').trim();
-      const resolvedName = await resolveBrandName('SHOPEE', shopIdStr);
-      const brandName = SHOPEE_STORE_BRAND_MAP[shopIdStr] || resolvedName || `Store_${shopIdStr}`;
-      const brandCode = brandName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-
-      console.log(`[Shopee Sync] Processing shop ID: ${shopIdStr} -> Brand: ${brandName}`);
-
-      try {
-        // 1. Ensure brand exists and links to parent company
-        let brandRecord = await prisma.brand.upsert({
-          where: { code: brandCode },
-          update: { name: brandName, companyId: parentCompany.id },
-          create: {
-            code: brandCode,
-            name: brandName,
-            companyId: parentCompany.id,
-          },
-        });
-
-        // 2. Fetch products from Shopee API
-        const products = await fetchShopeeProducts(account.accessToken, account.shopId);
-        let brandSyncedCount = 0;
-
-        // 3. Upsert each product with CCIOS enterprise fields
-        for (const p of products) {
-          const sku = String(p.sku || `SHOPEE_${p.item_id || 'UNKNOWN'}`);
-          const shopeeIdVal = p.item_id ? BigInt(p.item_id) : null;
-
-          await prisma.product.upsert({
-            where: { sku },
-            update: {
-              name: p.name || 'Untitled Shopee Product',
-              price: parseFloat(p.price || 0),
-              stock: parseInt(p.stock || 0, 10),
-              shopeeItemId: shopeeIdVal,
-              marketplace: 'SHOPEE',
-              lastSync: new Date(),
-              companyId: parentCompany.id,
-              brandId: brandRecord.id,
-              updatedAt: new Date(),
-            },
-            create: {
-              sku,
-              name: p.name || 'Untitled Shopee Product',
-              price: parseFloat(p.price || 0),
-              stock: parseInt(p.stock || 0, 10),
-              shopeeItemId: shopeeIdVal,
-              marketplace: 'SHOPEE',
-              lastSync: new Date(),
-              companyId: parentCompany.id,
-              brandId: brandRecord.id,
-            },
-          });
-          brandSyncedCount++;
-        }
-
-        totalSynced += brandSyncedCount;
-        results.push({ shopId: shopIdStr, brand: brandName, count: brandSyncedCount, success: true });
-
-      } catch (err) {
-        console.error(`[Shopee Sync Error for shop ${shopIdStr}]:`, err.message);
-        results.push({ shopId: shopIdStr, error: err.message, success: false });
-      }
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: `Shopee synchronization completed successfully.`,
-      totalSynced,
-      details: results,
-    });
-
-  } catch (error) {
-    console.error('[Shopee Sync Fatal Error]:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return data;
   }
 }
 
 export async function GET(request) {
-  return POST(request);
+  try {
+    const accounts = await prisma.shopeeAccount?.findMany() || [];
+    if (!accounts || accounts.length === 0) {
+      return NextResponse.json({ success: false, error: "No shopeeAccount records found." }, { status: 404 });
+    }
+
+    const company = await prisma.company.findFirst();
+    if (!company) {
+      return NextResponse.json({ success: false, error: "No company record found." }, { status: 400 });
+    }
+
+    // Process all shops concurrently for maximum speed
+    const results = await Promise.all(accounts.map(async (account) => {
+      const shopId = String(account.shopId || account.partnerId);
+      const brandInfo = SHOPEE_BRAND_MAPPING[shopId] || { name: "Unassigned", code: "UNASSIGNED" };
+      
+      try {
+        const brandRecord = await prisma.brand.upsert({
+          where: { code: brandInfo.code },
+          update: { name: brandInfo.name },
+          create: { name: brandInfo.name, code: brandInfo.code, companyId: company.id }
+        });
+        const brandId = brandRecord.id;
+
+        const listResponse = await shopeeFetchGet(account, '/api/v2/product/get_item_list', {
+          offset: 0,
+          page_size: 50,
+          item_status: 'NORMAL'
+        });
+
+        if (listResponse.error) {
+          return { shopId, brand: brandInfo.name, error: `Shopee API Error: ${listResponse.message || listResponse.error}`, status: 'failed' };
+        }
+
+        const itemList = listResponse?.response?.item || [];
+        if (itemList.length === 0) {
+          return { shopId, brand: brandInfo.name, imported: 0, status: 'success' };
+        }
+
+        // Fetch all item details in parallel chunks to avoid sequential latency
+        const productPromises = itemList.map(async (listItem) => {
+          const itemId = listItem.item_id;
+          const detailResponse = await shopeeFetchGet(account, '/api/v2/product/get_item_base_info', {
+            item_id_list: String(itemId)
+          });
+
+          const itemInfo = detailResponse?.response?.item_list?.[0];
+          if (!itemInfo) return null;
+
+          const sku = itemInfo.item_sku || String(itemId);
+          const name = itemInfo.item_name || `Shopee Item ${itemId}`;
+          const price = Number(itemInfo.price_info?.[0]?.original_price || itemInfo.price_info?.[0]?.current_price || 0);
+          const stock = Number(itemInfo.stock_info?.[0]?.normal_stock || 0);
+
+          if (!sku) return null;
+
+          return prisma.product.upsert({
+            where: { sku: sku },
+            update: { name, price, stock, brandId, updatedAt: new Date() },
+            create: { sku, name, marketplace: 'SHOPEE', price, stock, brandId },
+          });
+        });
+
+        const upsertResults = await Promise.all(productPromises);
+        const importedCount = upsertResults.filter(Boolean).length;
+
+        return { shopId, brand: brandInfo.name, imported: importedCount, status: 'success' };
+      } catch (err) {
+        return { shopId, brand: brandInfo.name, error: err.message, status: 'failed' };
+      }
+    }));
+
+    return NextResponse.json({ success: true, results });
+  } catch (error) {
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
 }
