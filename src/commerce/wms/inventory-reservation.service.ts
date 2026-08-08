@@ -22,7 +22,7 @@ export class InventoryReservationService {
     try {
       for (const item of items) {
         const lockKey = `lock:stock:${item.productVariationId}:${item.warehouseId}`;
-        const acquired = await this.redis.set(lockKey, orderId, 'NX', 'EX', 10);
+        const acquired = await this.redis.set(lockKey, orderId, 'EX', 10, 'NX');
         
         if (!acquired) {
           throw new Error(`LOCK_ACQUISITION_FAILED: Stock resource currently locked for variant ${item.productVariationId}`);

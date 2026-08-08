@@ -1,5 +1,6 @@
-import { prisma } from '../../../packages/shared/src/database/prisma.client';
-import { SyncOrderDTO } from '../../plugins/core/base-adapter.interface';
+import { prisma } from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
+import { SyncOrderDTO } from '@/src/commerce/plugins/core/base-adapter.interface';
 import { InventoryReservationService } from '../wms/inventory-reservation.service';
 import { EventBus } from '../../core/events/event-bus';
 
@@ -38,8 +39,8 @@ export class OrderDecouplerService {
       return existingOrder.id;
     }
 
-    const lineItemsToCreate = [];
-    const reservationItems = [];
+    const lineItemsToCreate: { externalItemId: string; channelSku: string; productVariationId: string | null; title: string; quantity: number; unitPrice: number; totalPrice: number; }[] = [];
+    const reservationItems: { productVariationId: string; warehouseId: string; quantity: number; }[] = [];
 
     for (const item of rawOrder.items) {
       const listing = await prisma.marketplaceListing.findFirst({
@@ -71,7 +72,7 @@ export class OrderDecouplerService {
       }
     }
 
-    const newOrder = await prisma.$transaction(async (tx) => {
+    const newOrder = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const customer = await tx.customer.upsert({
         where: {
           companyId_email: {

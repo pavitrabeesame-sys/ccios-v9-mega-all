@@ -1,4 +1,4 @@
-import { prisma } from '../../../packages/shared/src/database/prisma.client';
+import { prisma } from '@/lib/prisma';
 import { TenantContext } from '../../core/tenant/tenant.context';
 import { EventBus } from '../../core/events/event-bus';
 
@@ -70,7 +70,7 @@ export class ChatBroadcastService {
           distinct: ['customerId'],
         });
 
-        const activeIds = recentCustomerIds.map((c) => c.customerId);
+        const activeIds = recentCustomerIds.map((c: { customerId: string | null }) => c.customerId);
         return await prisma.customer.count({
           where: {
             companyId,

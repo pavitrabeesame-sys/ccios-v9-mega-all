@@ -1,4 +1,5 @@
-import { prisma } from '../../../packages/shared/src/database/prisma.client';
+import { prisma } from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
 import { TenantContext } from '../../core/tenant/tenant.context';
 
 export interface CreateMasterProductDTO {
@@ -23,8 +24,8 @@ export class MasterProductService {
   public async createMasterProduct(dto: CreateMasterProductDTO) {
     const scope = TenantContext.getScope();
 
-    return await prisma.$transaction(async (tx) => {
-      const existing = await tx.masterProduct.findFirst({
+    return await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const existing = await tx.product.findFirst({
         where: { companyId: scope.companyId, sku: dto.sku },
       });
 
@@ -32,7 +33,7 @@ export class MasterProductService {
         throw new Error(`PIM_SKU_CONFLICT: Master SKU '${dto.sku}' already exists in this tenant.`);
       }
 
-      const product = await tx.masterProduct.create({
+      const product = await tx.product.create({
         data: {
           companyId: scope.companyId,
           brandId: dto.brandId,
@@ -40,7 +41,7 @@ export class MasterProductService {
           sku: dto.sku,
           name: dto.name,
           description: dto.description || '',
-          basePrice: dto.basePrice,
+          price: dto.basePrice,
           costPrice: dto.costPrice || 0,
           attributes: (dto.attributes as any) || {},
           status: 'ACTIVE',
@@ -50,7 +51,7 @@ export class MasterProductService {
       if (dto.variations && dto.variations.length > 0) {
         await tx.productVariation.createMany({
           data: dto.variations.map((v) => ({
-            masterProductId: product.id,
+            productId: product.id,
             sku: v.sku,
             name: v.name,
             price: v.price,
@@ -61,9 +62,9 @@ export class MasterProductService {
         });
       }
 
-      return tx.masterProduct.findUnique({
+      return tx.product.findUnique({
         where: { id: product.id },
-        include: { variations: true, category: true, brand: true },
+        include: { productVariations: true, category: true, brand: true },
       });
     });
   }

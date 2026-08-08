@@ -1,4 +1,4 @@
-import { prisma } from '../../../packages/shared/src/database/prisma.client';
+import { prisma } from '@/lib/prisma';
 import { TenantContext } from '../../core/tenant/tenant.context';
 
 export interface RetrievalContext {
@@ -16,10 +16,10 @@ export class ContextRetrieverService {
       where: { id: scope.companyId },
     });
 
-    const products = await prisma.masterProduct.findMany({
+    const products = await prisma.product.findMany({
       where: { companyId: scope.companyId, status: 'ACTIVE' },
       take: 5,
-      select: { sku: true, name: true, basePrice: true },
+      select: { sku: true, name: true, price: true },
     });
 
     const thirtyDaysAgo = new Date();
@@ -34,14 +34,14 @@ export class ContextRetrieverService {
 
     const channels = await prisma.marketplaceAccount.findMany({
       where: { store: { companyId: scope.companyId } },
-      select: { channel: true },
+      select: { marketplace: true },
     });
 
-    const uniqueChannels = Array.from(new Set(channels.map((c) => c.channel)));
+    const uniqueChannels: string[] = Array.from(new Set(channels.map((c: { marketplace: unknown }) => String(c.marketplace))));
 
     return {
       brandName: company?.name || 'Retail Brand',
-      topProducts: products.map((p) => ({ sku: p.sku, name: p.name, price: Number(p.basePrice) })),
+      topProducts: products.map((p: { sku: string; name: string; price: number }) => ({ sku: p.sku, name: p.name, price: Number(p.price) })),
       recentOrdersCount,
       topChannels: uniqueChannels,
     };

@@ -1,4 +1,5 @@
-import { prisma } from '../../../packages/shared/src/database/prisma.client';
+import { prisma } from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
 import { TenantContext } from '../../core/tenant/tenant.context';
 
 export type LedgerEntryType = 'PURCHASE_RECEIPT' | 'SALES_DEDUCTION' | 'RESERVATION_LOCK' | 'RESERVATION_RELEASE' | 'ADJUSTMENT' | 'RETURN_RESTOCK';
@@ -17,7 +18,7 @@ export class InventoryLedgerService {
   public async recordTransaction(dto: LedgerTransactionDTO) {
     const scope = TenantContext.getScope();
 
-    return await prisma.$transaction(async (tx) => {
+    return await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const snapshot = await tx.inventorySnapshot.findUnique({
         where: {
           productVariationId_warehouseId: {
