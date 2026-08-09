@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 const SHOP_BRANDS: Record<string, string> = {
   "74401016": "RAV",
