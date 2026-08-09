@@ -1,55 +1,47 @@
-﻿"use client";
+﻿'use client';
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from 'react';
 
-interface Review {
+export interface Review {
   id: string;
-  reviewId: string;
-  marketplace: string;
-  brand?: string;
-  productName: string;
-  productSku?: string;
-  rating: number;
-  reviewText: string;
-  customerName: string;
+  reviewId?: string;
+  userName?: string;
+  comment?: string;
   aiReply?: string;
-  status: string;
-  createdAt: string;
+  finalReply?: string;
+  rating?: number;
+  status?: string;
 }
 
 export default function ReviewsPage() {
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [total, setTotal] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
-  const [syncing, setSyncing] = useState<boolean>(false);
-  const [searchTerm, setSearchTerm] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [error, setError] = useState<string | null>(null);
 
   const fetchReviews = async () => {
+    setLoading(true);
+    setError(null);
+
     try {
-      setLoading(true);
-      const res = await fetch("/api/reviews");
-      const data = await res.json();
-
-      // Flexible response parsing to guarantee compatibility with any API structure
-      let reviewList: Review[] = [];
-      let totalCount = 0;
-
-      if (Array.isArray(data)) {
-        reviewList = data;
-        totalCount = data.length;
-      } else if (data && Array.isArray(data.reviews)) {
-        reviewList = data.reviews;
-        totalCount = data.total ?? data.reviews.length;
-      } else if (data && Array.isArray(data.data)) {
-        reviewList = data.data;
-        totalCount = data.total ?? data.data.length;
+      const res = await fetch('/api/reviews');
+      if (!res.ok) {
+        throw new Error(`Failed to fetch reviews (Status: ${res.status})`);
       }
-
-      setReviews(reviewList);
-      setTotal(totalCount);
-    } catch (error) {
-      console.error("Failed to fetch reviews:", error);
+      const data = await res.json();
+      
+      // Ensure data is an array before setting state
+      if (Array.isArray(data)) {
+        setReviews(data);
+      } else if (data && Array.isArray(data.reviews)) {
+        setReviews(data.reviews);
+      } else if (data && Array.isArray(data.data)) {
+        setReviews(data.data);
+      } else {
+        setReviews([]);
+      }
+    } catch (err: any) {
+      console.error('Error loading reviews:', err);
+      setError(err.message || 'An unexpected error occurred.');
     } finally {
       setLoading(false);
     }
@@ -59,139 +51,126 @@ export default function ReviewsPage() {
     fetchReviews();
   }, []);
 
-  const handleSync = async () => {
+  return (
+    <div className="max-w-4xl mx-auto p-6">
+      <h1 className="text-2xl font-bold mb-6 text-gray-900">Product Reviews Management</h1>
+
+      {loading && (
+        <div className="flex justify-center items-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <span className="ml-3 text-gray-600">Loading reviews...</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="p-4 mb-6 bg-red-50 border border-red-200 text-red-700 rounded-lg flex justify-between items-center">
+          <span>{error}</span>
+          <button
+            onClick={fetchReviews}
+            className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && reviews.length === 0 && (
+        <div className="text-center py-12 bg-gray-50 border rounded-lg text-gray-500">
+          No reviews found.
+        </div>
+      )}
+
+      {!loading && !error && reviews.length > 0 && (
+        <div className="space-y-4">
+          {reviews.map((review) =>
+            review && review.id ? (
+              <ReviewCard
+                key={review.id}
+                review={review}
+                onReplySuccess={fetchReviews}
+              />
+            ) : null
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewCard({
+  review,
+  onReplySuccess,
+}: {
+  review: any;
+  onReplySuccess: () => void;
+}) {
+  const customerName = review?.customerName || 'Anonymous Customer';
+  const commentText = review?.reviewText || 'No comment provided.';
+  const initialReply = review?.finalReply || review?.aiReply || '';
+
+  const [replyText, setReplyText] = useState<string>(initialReply);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+
+  if (!review) return null;
+
+  const handleApproveAndReply = async () => {
+    if (!replyText.trim()) return;
+    setSubmitting(true);
+
     try {
-      setSyncing(true);
-      const res = await fetch("/api/reviews/sync", { method: "POST" });
-      await res.json();
-      alert("Sync completed successfully!");
-      fetchReviews();
-    } catch (error) {
-      console.error("Sync failed:", error);
-      alert("Sync failed. Check console for details.");
+      const response = await fetch(`/api/reviews/${review.id}/reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customReply: replyText,
+          approvedBy: 'CS Team',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to post reply');
+      }
+
+      onReplySuccess();
+    } catch (err) {
+      console.error('Error submitting reply:', err);
     } finally {
-      setSyncing(false);
+      setSubmitting(false);
     }
   };
 
-  const filteredReviews = reviews.filter((rev) => {
-    const matchesSearch =
-      rev.productName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      rev.customerName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      rev.reviewText?.toLowerCase().includes(searchTerm.toLowerCase());
-
-    const matchesStatus =
-      statusFilter === "ALL" || rev.status === statusFilter;
-
-    return matchesSearch && matchesStatus;
-  });
-
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 p-6 md:p-8">
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-lg">
-          <div>
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white">
-              Customer Reviews Dashboard
-            </h1>
-            <p className="text-sm text-gray-400 mt-1">
-              Manage marketplace feedback, view AI reply drafts, and synchronize new reviews.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="px-4 py-2 bg-gray-800 rounded-lg border border-gray-700 text-sm font-medium">
-              Total Reviews: <span className="text-indigo-400 font-bold">{total}</span>
-            </div>
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg transition-colors flex items-center gap-2 shadow"
-            >
-              {syncing ? "Syncing..." : "Sync Reviews"}
-            </button>
-          </div>
-        </div>
+    <div className="border border-gray-200 rounded-lg p-5 shadow-sm bg-white mb-4">
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="font-semibold text-gray-800">{customerName}</h3>
+        <span className="text-sm font-medium text-amber-500">
+          ★ {review?.rating ?? 5}/5
+        </span>
+      </div>
 
-        {/* Filters & Search */}
-        <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-gray-900 p-4 rounded-xl border border-gray-800">
-          <input
-            type="text"
-            placeholder="Search by product, customer, or review text..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full md:w-96 px-4 py-2 bg-gray-950 border border-gray-700 rounded-lg text-sm text-gray-200 focus:outline-none focus:border-indigo-500"
-          />
-          <div className="flex gap-2 w-full md:w-auto overflow-x-auto">
-            {["ALL", "PENDING", "APPROVED"].map((status) => (
-              <button
-                key={status}
-                onClick={() => setStatusFilter(status)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  statusFilter === status
-                    ? "bg-indigo-600 text-white"
-                    : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white"
-                }`}
-              >
-                {status}
-              </button>
-            ))}
-          </div>
-        </div>
+      <p className="text-gray-700 mb-4">{commentText}</p>
 
-        {/* Review List */}
-        {loading ? (
-          <div className="text-center py-20 text-gray-400">Loading reviews from database...</div>
-        ) : filteredReviews.length === 0 ? (
-          <div className="text-center py-20 bg-gray-900 border border-gray-800 rounded-xl text-gray-400">
-            No reviews found matching your criteria.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4">
-            {filteredReviews.map((review) => (
-              <div
-                key={review.id || review.reviewId}
-                className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-md hover:border-gray-700 transition-all space-y-4"
-              >
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 border-b border-gray-800 pb-3">
-                  <div>
-                    <span className="text-xs font-semibold px-2.5 py-1 bg-indigo-950 text-indigo-300 border border-indigo-800/50 rounded uppercase tracking-wider">
-                      {review.marketplace}
-                    </span>
-                    <h3 className="text-lg font-semibold text-white mt-1">
-                      {review.productName}
-                    </h3>
-                    {review.productSku && (
-                      <span className="text-xs text-gray-400">SKU: {review.productSku}</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex text-amber-400 text-sm">
-                      {"★".repeat(review.rating)}
-                      {"☆".repeat(5 - review.rating)}
-                    </div>
-                    <span className="text-xs text-gray-400">
-                      By <strong className="text-gray-200">{review.customerName}</strong>
-                    </span>
-                  </div>
-                </div>
+      <div className="space-y-2">
+        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider">
+          Reply
+        </label>
+        <textarea
+          value={replyText}
+          onChange={(e) => setReplyText(e.target.value)}
+          rows={3}
+          className="w-full border border-gray-300 rounded-md p-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="Enter reply text..."
+        />
+      </div>
 
-                <p className="text-gray-300 text-sm leading-relaxed bg-gray-950/50 p-4 rounded-lg border border-gray-800/80">
-                  {review.reviewText || "(No review text provided)"}
-                </p>
-
-                {review.aiReply && (
-                  <div className="bg-indigo-950/30 border border-indigo-900/40 p-4 rounded-lg space-y-1">
-                    <div className="text-xs font-semibold text-indigo-400 uppercase tracking-wide">
-                      AI Reply Draft
-                    </div>
-                    <p className="text-sm text-indigo-200">{review.aiReply}</p>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+      <div className="mt-3 flex justify-end">
+        <button
+          onClick={handleApproveAndReply}
+          disabled={submitting || !replyText.trim()}
+          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
+        >
+          {submitting ? 'Submitting...' : 'Approve & Reply'}
+        </button>
       </div>
     </div>
   );

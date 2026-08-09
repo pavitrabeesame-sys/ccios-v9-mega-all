@@ -177,15 +177,6 @@ export async function POST(request: Request) {
               const resolvedCustomerName = cleanText(item.buyer_username || item.author_name, "Shopee Buyer");
               const resolvedReviewText = cleanText(item.comment || item.review || item.content, "");
 
-console.log("Shopee Review Item:", {
-  reviewId: reviewIdStr,
-  itemId: item.item_id,
-  itemName: item.item_name,
-  productName: item.product_name,
-  modelName: item.model_name,
-  resolvedProductName,
-});
-
               await prisma.review.upsert({
                 where: { reviewId: reviewIdStr },
                 update: {

@@ -237,34 +237,36 @@ model User {
 }
 
 model Review {
-  id           String       @id @default(cuid())
-  reviewId     String       @unique
-  marketplace  Marketplace
-  storeName    String
-  orderNumber  String?
-  productName  String?
-  productSku   String?
-  customerName String
-  rating       Int
-  reviewText   String?
-  aiReply      String?
-  finalReply   String?
-  status       ReviewStatus @default(PENDING)
-  repliedAt    DateTime?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  brand        String?
-  category     String?
-  language     String?
-  sentiment    String?
-  approvedBy   String?
-  confidence   Float?
-  emotion      String?
-  imageUrls    String[]
-  keywords     String[]
-  repliedBy    String?
-  syncTime     DateTime?
-  videoUrls    String[]
+  id            String       @id @default(cuid())
+  reviewId      String       @unique
+  marketplace   Marketplace
+  storeName     String
+  orderNumber   String?
+  productName   String?
+  productSku    String?
+  modelName     String?      // New: Variation / Model name (e.g., Black / XL)
+  productImage  String?      // New: Product image URL
+  customerName  String
+  rating        Int
+  reviewText    String?
+  aiReply       String?
+  finalReply    String?
+  status        ReviewStatus @default(PENDING)
+  repliedAt     DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  brand         String?
+  category      String?
+  language      String?
+  sentiment     String?
+  approvedBy    String?
+  confidence    Float?
+  emotion       String?
+  imageUrls     String[]
+  keywords      String[]
+  repliedBy     String?
+  syncTime      DateTime?
+  videoUrls     String[]
 }
 
 model ReplyTemplate {

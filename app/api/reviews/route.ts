@@ -1,6 +1,6 @@
 ﻿import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import type { Review } from '@prisma/client';
+// Adjust relative path if prisma.ts is at src/lib/prisma.ts vs lib/prisma.ts:
+import { prisma } from '../../../lib/prisma'; // or '../../../src/lib/prisma'
 
 export async function GET() {
   try {
@@ -8,28 +8,11 @@ export async function GET() {
       orderBy: { createdAt: 'desc' },
     });
 
-    return NextResponse.json({
-      success: true,
-      total: reviews.length,
-      reviews: reviews.map((r: Review) => ({
-        id: r.id,
-        reviewId: r.reviewId,
-        marketplace: r.marketplace,
-        brand: r.brand,
-        productName: r.productName,
-        productSku: r.productSku,
-        rating: r.rating,
-        reviewText: r.reviewText,
-        customerName: r.customerName,
-        aiReply: r.aiReply,
-        status: r.status,
-        createdAt: r.createdAt,
-      })),
-    });
-  } catch (error) {
-    console.error('Error fetching reviews:', error);
+    return NextResponse.json(reviews);
+  } catch (error: any) {
+    console.error('API Error fetching reviews:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to fetch reviews' },
+      { error: error.message || 'Failed to fetch reviews' },
       { status: 500 }
     );
   }

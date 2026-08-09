@@ -1,4 +1,5 @@
-import CredentialsProvider from "next-auth/providers/credentials";
+import CredentialsProviderImport from "next-auth/providers/credentials";
+const CredentialsProvider = CredentialsProviderImport.default || CredentialsProviderImport;
 import { PrismaClient } from "@prisma/client";
 import { verifyPassword } from "./password";
 
