@@ -244,7 +244,7 @@ export default function ReviewsPage() {
                   readOnly
                   rows={3}
                   className="w-full bg-gray-950 border border-gray-800 rounded-lg p-3 text-xs text-gray-200 resize-none outline-none"
-                  value={`Thank you so much for your wonderful feedback, ${selectedReview.customerName}! We're thrilled you love your new item from ${selectedReview.storeName}. Looking forward to serving you again soon!`}
+                  value={`Thank you for your kind review. We're delighted that you're enjoying your purchase from ${selectedReview.storeName.replace(/\s*\([^)]*\)\s*$/, '')}. Your satisfaction is our priority, and we sincerely appreciate your support. We look forward to serving you again.`}
                 />
               </div>
             )}
