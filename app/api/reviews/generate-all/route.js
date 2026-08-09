@@ -12,17 +12,20 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function POST(req) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { ids } = body;
+    const { ids, limit } = body;
+    const batchLimit = typeof limit === 'number' && limit > 0 ? limit : undefined;
 
     let reviewsToProcess = [];
 
     if (ids && Array.isArray(ids) && ids.length > 0) {
       reviewsToProcess = await db.review.findMany({
-        where: { id: { in: ids } },
+        where: { id: { in: ids }, aiReply: null },
+        take: batchLimit,
       });
     } else {
       reviewsToProcess = await db.review.findMany({
         where: { aiReply: null },
+        take: batchLimit,
       });
     }
 

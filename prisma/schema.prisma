@@ -7,223 +7,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model MarketplaceBrandMapping {
-  id          String   @id @default(cuid())
-  marketplace String
-  storeId     String
-  brandName   String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@unique([marketplace, storeId])
-}
-
-model Company {
-  id             String          @id @default(cuid())
-  name           String
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  code           String          @unique
-  description    String?
-  brands         Brand[]
-  lazadaAccounts LazadaAccount[]
-  Product        Product[]
-  stores         Store[]
-  users          User[]
-}
-
-model Brand {
-  id             String          @id @default(cuid())
-  name           String
-  companyId      String
-  code           String          @unique
-  createdAt      DateTime        @default(now())
-  description    String?
-  updatedAt      DateTime        @updatedAt
-  AIProfile      AIProfile?
-  company        Company         @relation(fields: [companyId], references: [id])
-  products       Product[]
-  shopeeAccounts ShopeeAccount[]
-}
-
-model Category {
-  id          String    @id @default(cuid())
-  name        String
-  code        String    @unique
-  description String?
-  image       String?
-  sortOrder   Int       @default(0)
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  products    Product[]
-}
-
-model Store {
-  id                  String               @id @default(cuid())
-  name                String
-  companyId           String
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  marketplace         Marketplace
-  company             Company              @relation(fields: [companyId], references: [id])
-  orders              Order[]
-  marketplaceAccounts MarketplaceAccount[]
-}
-
-model Product {
-  id                  String               @id @default(cuid())
-  sku                 String               @unique
-  name                String
-  price               Float
-  stock               Int                  @default(0)
-  brandId             String
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  barcode             String?              @unique
-  description         String?
-  categoryId          String?
-  costPrice           Float                @default(0)
-  height              Float?
-  image               String?
-  length              Float?
-  maxStock            Int?
-  minStock            Int                  @default(5)
-  status              String               @default("ACTIVE")
-  weight              Float?
-  width               Float?
-  companyId           String?
-  lastSync            DateTime?
-  marketplace         Marketplace          @default(SHOPEE)
-  shopeeItemId        BigInt?
-  attributes          Json?
-  brand               Brand                @relation(fields: [brandId], references: [id])
-  category            Category?            @relation(fields: [categoryId], references: [id])
-  Company             Company?             @relation(fields: [companyId], references: [id])
-  productVariations   ProductVariation[]
-}
-
-model InventorySnapshot {
-  id                 String   @id @default(cuid())
-  companyId          String
-  productVariationId String
-  warehouseId        String
-  quantityAvailable  Int      @default(0)
-  quantityReserved   Int      @default(0)
-  quantityTotal      Int      @default(0)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  productVariation   ProductVariation @relation(fields: [productVariationId], references: [id])
-
-  @@unique([productVariationId, warehouseId])
-}
-
-model InventoryLedger {
-  id                    String   @id @default(cuid())
-  companyId             String
-  productVariationId    String
-  warehouseId           String
-  binLocationId         String?
-  type                  String
-  quantityChange        Int
-  balanceAfterAvailable Int
-  balanceAfterReserved  Int
-  referenceId           String
-  notes                 String?
-  createdAt             DateTime @default(now())
-  productVariation      ProductVariation @relation(fields: [productVariationId], references: [id])
-}
-
-model Customer {
-  id        String   @id @default(cuid())
-  companyId String
-  name      String
-  email     String?
-  phone     String?
+model AdminUser {
+  id        String   @id @default(uuid())
+  adminId   String   @unique
+  password  String
+  name      String?
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  orders    Order[]
-
-  @@unique([companyId, email])
-}
-
-model Order {
-  id                   String              @id @default(cuid())
-  companyId            String
-  storeId              String
-  marketplaceAccountId String?
-  customerId           String?
-  externalOrderId      String
-  orderNumber          String?             @unique
-  totalAmount          Float               @default(0)
-  total                Float               @default(0)
-  currency             String              @default("MYR")
-  status               String
-  shippingAddress      Json?
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
-  store                Store               @relation(fields: [storeId], references: [id])
-  customer             Customer?           @relation(fields: [customerId], references: [id])
-  marketplaceAccount   MarketplaceAccount? @relation(fields: [marketplaceAccountId], references: [id])
-  items                OrderItem[]
-}
-
-model OrderItem {
-  id                 String             @id @default(cuid())
-  orderId            String
-  externalItemId     String?
-  channelSku         String
-  productVariationId String?
-  title              String
-  quantity           Int
-  unitPrice          Float
-  totalPrice         Float
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-  order              Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productVariation   ProductVariation?  @relation(fields: [productVariationId], references: [id])
-}
-
-model MarketplaceAccount {
-  id                  String               @id @default(cuid())
-  storeId             String
-  marketplace         Marketplace
-  accountName         String
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  store               Store                @relation(fields: [storeId], references: [id])
-  marketplaceListings MarketplaceListing[]
-  orders              Order[]
-}
-
-model ProductVariation {
-  id                  String               @id @default(cuid())
-  productId           String
-  sku                 String               @unique
-  name                String
-  price               Float                @default(0)
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  product             Product              @relation(fields: [productId], references: [id])
-  orderItems          OrderItem[]
-  marketplaceListings MarketplaceListing[]
-  inventorySnapshots  InventorySnapshot[]
-  inventoryLedger     InventoryLedger[]
-}
-
-model MarketplaceListing {
-  id                   String              @id @default(cuid())
-  marketplaceAccountId String
-  productVariationId   String?
-  channelSku           String
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
-  marketplaceAccount   MarketplaceAccount  @relation(fields: [marketplaceAccountId], references: [id])
-  productVariation     ProductVariation?   @relation(fields: [productVariationId], references: [id])
 }
 
 model User {
-  id        String    @id @default(cuid())
+  id        String    @id @default(uuid())
   name      String?
   email     String    @unique
   password  String
@@ -233,53 +26,145 @@ model User {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   companyId String?
-  company   Company?  @relation(fields: [companyId], references: [id])
+  Company   Company?  @relation(fields: [companyId], references: [id])
+}
+
+model ShopeeAccount {
+  id           String   @id @default(uuid())
+  shopId       BigInt   @unique
+  accessToken  String
+  refreshToken String
+  expireIn     Int
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+  brandId      String?
+  Brand        Brand?   @relation(fields: [brandId], references: [id])
+}
+
+model LazadaAccount {
+  id           String   @id @default(uuid())
+  sellerId     String   @unique
+  appKey       String
+  appSecret    String
+  accessToken  String
+  refreshToken String
+  expireIn     Int
+  companyId    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  Company      Company? @relation(fields: [companyId], references: [id])
+}
+
+model Brand {
+  id            String          @id @default(uuid())
+  name          String
+  companyId     String
+  code          String          @unique
+  createdAt     DateTime        @default(now())
+  description   String?
+  updatedAt     DateTime        @updatedAt
+  AIProfile     AIProfile?
+  Company       Company         @relation(fields: [companyId], references: [id])
+  products      Product[]
+  ShopeeAccount ShopeeAccount[]
+}
+
+model Product {
+  id           String             @id @default(uuid())
+  sku          String             @unique
+  name         String
+  price        Float
+  stock        Int                @default(0)
+  brandId      String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  barcode      String?            @unique
+  description  String?
+  categoryId   String?
+  costPrice    Float              @default(0)
+  height       Float?
+  image        String?
+  length       Float?
+  maxStock     Int?
+  minStock     Int                @default(5)
+  status       String             @default("ACTIVE")
+  weight       Float?
+  width        Float?
+  companyId    String?
+  lastSync     DateTime?
+  marketplace  Marketplace        @default(SHOPEE)
+  shopeeItemId BigInt?
+  attributes   Json?
+  brand        Brand              @relation(fields: [brandId], references: [id])
+  Category     Category?          @relation(fields: [categoryId], references: [id])
+  Company      Company?           @relation(fields: [companyId], references: [id])
+  variations   ProductVariation[]
+}
+
+model ProductVariation {
+  id                 String               @id @default(uuid())
+  productId          String
+  sku                String               @unique
+  name               String
+  price              Float                @default(0)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  InventoryLedger    InventoryLedger[]
+  InventorySnapshot  InventorySnapshot[]
+  MarketplaceListing MarketplaceListing[]
+  OrderItem          OrderItem[]
+  product            Product              @relation(fields: [productId], references: [id])
 }
 
 model Review {
-  id            String       @id @default(cuid())
-  reviewId      String       @unique
-  marketplace   Marketplace
-  storeName     String
-  orderNumber   String?
-  productName   String?
-  productSku    String?
-  modelName     String?      // New: Variation / Model name (e.g., Black / XL)
-  productImage  String?      // New: Product image URL
-  customerName  String
-  rating        Int
-  reviewText    String?
-  aiReply       String?
-  finalReply    String?
-  status        ReviewStatus @default(PENDING)
-  repliedAt     DateTime?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  brand         String?
-  category      String?
-  language      String?
-  sentiment     String?
-  approvedBy    String?
-  confidence    Float?
-  emotion       String?
-  imageUrls     String[]
-  keywords      String[]
-  repliedBy     String?
-  syncTime      DateTime?
-  videoUrls     String[]
+  id           String       @id @default(uuid())
+  reviewId     String       @unique
+  marketplace  Marketplace
+  storeName    String
+  orderNumber  String?
+  productName  String?
+  productSku   String?
+  customerName String
+  rating       Int
+  reviewText   String?
+  aiReply      String?
+  finalReply   String?
+  status       ReviewStatus @default(PENDING)
+  repliedAt    DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  brand        String?
+  category     String?
+  language     String?
+  sentiment    String?
+  approvedBy   String?
+  confidence   Float?
+  emotion      String?
+  imageUrls    String[]
+  keywords     String[]
+  repliedBy    String?
+  syncTime     DateTime?
+  videoUrls    String[]
+  modelName    String?
+  productImage String?
 }
 
-model ReplyTemplate {
-  id        String   @id @default(cuid())
-  brand     String
-  rating    Int
-  title     String
-  template  String
-  createdAt DateTime @default(now())
+model Company {
+  id            String          @id @default(uuid())
+  name          String
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  code          String          @unique
+  description   String?
+  Brand         Brand[]
+  LazadaAccount LazadaAccount[]
+  Product       Product[]
+  Store         Store[]
+  User          User[]
 }
 
 model AIProfile {
-  id             String   @id @default(cuid())
+  id             String   @id @default(uuid())
   brandId        String   @unique
   model          String   @default("qwen3:4b")
   tone           String   @default("Professional")
@@ -293,30 +178,153 @@ model AIProfile {
   Brand          Brand    @relation(fields: [brandId], references: [id])
 }
 
-model ShopeeAccount {
-  id           String   @id @default(cuid())
-  shopId       BigInt   @unique
-  accessToken  String
-  refreshToken String
-  expireIn     Int
-  updatedAt    DateTime @updatedAt
-  createdAt    DateTime @default(now())
-  brandId      String?
-  brand        Brand?   @relation(fields: [brandId], references: [id])
+model MarketplaceBrandMapping {
+  id          String   @id @default(uuid())
+  marketplace String
+  storeId     String
+  brandName   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([marketplace, storeId])
 }
 
-model LazadaAccount {
-  id           String   @id @default(cuid())
-  sellerId     String   @unique
-  appKey       String
-  appSecret    String
-  accessToken  String
-  refreshToken String
-  expireIn     Int
-  companyId    String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  company      Company? @relation(fields: [companyId], references: [id])
+model Category {
+  id          String    @id
+  name        String
+  code        String    @unique
+  description String?
+  image       String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime
+  Product     Product[]
+}
+
+model Customer {
+  id        String   @id
+  name      String
+  email     String?
+  createdAt DateTime @default(now())
+  phone     String?
+  companyId String
+  updatedAt DateTime
+  Order     Order[]
+
+  @@unique([companyId, email])
+}
+
+model InventoryLedger {
+  id                    String           @id
+  companyId             String
+  productVariationId    String
+  warehouseId           String
+  binLocationId         String?
+  type                  String
+  quantityChange        Int
+  balanceAfterAvailable Int
+  balanceAfterReserved  Int
+  referenceId           String
+  notes                 String?
+  createdAt             DateTime         @default(now())
+  ProductVariation      ProductVariation @relation(fields: [productVariationId], references: [id])
+}
+
+model InventorySnapshot {
+  id                 String           @id
+  companyId          String
+  productVariationId String
+  warehouseId        String
+  quantityAvailable  Int              @default(0)
+  quantityReserved   Int              @default(0)
+  quantityTotal      Int              @default(0)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime
+  ProductVariation   ProductVariation @relation(fields: [productVariationId], references: [id])
+
+  @@unique([productVariationId, warehouseId])
+}
+
+model MarketplaceAccount {
+  id                 String               @id
+  storeId            String
+  marketplace        Marketplace
+  accountName        String
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime
+  Store              Store                @relation(fields: [storeId], references: [id])
+  MarketplaceListing MarketplaceListing[]
+  Order              Order[]
+}
+
+model MarketplaceListing {
+  id                   String             @id
+  marketplaceAccountId String
+  productVariationId   String?
+  channelSku           String
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime
+  MarketplaceAccount   MarketplaceAccount @relation(fields: [marketplaceAccountId], references: [id])
+  ProductVariation     ProductVariation?  @relation(fields: [productVariationId], references: [id])
+}
+
+model Order {
+  id                   String              @id
+  orderNumber          String?             @unique
+  total                Float               @default(0)
+  status               String
+  storeId              String
+  createdAt            DateTime            @default(now())
+  companyId            String
+  currency             String              @default("MYR")
+  customerId           String?
+  externalOrderId      String
+  marketplaceAccountId String?
+  shippingAddress      Json?
+  totalAmount          Float               @default(0)
+  updatedAt            DateTime
+  Customer             Customer?           @relation(fields: [customerId], references: [id])
+  MarketplaceAccount   MarketplaceAccount? @relation(fields: [marketplaceAccountId], references: [id])
+  Store                Store               @relation(fields: [storeId], references: [id])
+  OrderItem            OrderItem[]
+}
+
+model OrderItem {
+  id                 String            @id
+  orderId            String
+  externalItemId     String?
+  channelSku         String
+  productVariationId String?
+  title              String
+  quantity           Int
+  unitPrice          Float
+  totalPrice         Float
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime
+  Order              Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  ProductVariation   ProductVariation? @relation(fields: [productVariationId], references: [id])
+}
+
+model ReplyTemplate {
+  id        String   @id
+  brand     String
+  rating    Int
+  title     String
+  template  String
+  createdAt DateTime @default(now())
+}
+
+model Store {
+  id                 String               @id
+  name               String
+  companyId          String
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime
+  marketplace        Marketplace
+  MarketplaceAccount MarketplaceAccount[]
+  Order              Order[]
+  Company            Company              @relation(fields: [companyId], references: [id])
 }
 
 enum Role {
