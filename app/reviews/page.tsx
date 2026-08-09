@@ -190,7 +190,8 @@ export default function ReviewsPage() {
       });
       const data = await res.json();
       if (data.success) {
-        alert(`Successfully posted ${data.posted} reply/replies!${data.failed > 0 ? ` (${data.failed} failed)` : ''}`);
+        const postedCount = data.posted !== undefined ? data.posted : idsToPost.length;
+        alert(`Successfully posted ${postedCount} reply/replies!${data.failed > 0 ? ` (${data.failed} failed)` : ''}`);
         setSelectedIds([]);
         await loadReviews();
       } else {
