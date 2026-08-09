@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { SyncOrderDTO } from '@/src/commerce/plugins/core/base-adapter.interface';
 import { InventoryReservationService } from '../wms/inventory-reservation.service';
 import { EventBus } from '../../core/events/event-bus';
+import { randomUUID } from 'crypto';
 
 export class OrderDecouplerService {
   private reservationService: InventoryReservationService;
@@ -11,17 +12,24 @@ export class OrderDecouplerService {
     this.reservationService = reservationService;
   }
 
-  public async ingestOrder(marketplaceAccountId: string, rawOrder: SyncOrderDTO): Promise<string> {
+  public async ingestOrder(
+    marketplaceAccountId: string,
+    rawOrder: SyncOrderDTO
+  ): Promise<string> {
     const account = await prisma.marketplaceAccount.findUnique({
       where: { id: marketplaceAccountId },
-      include: { store: true },
+      include: {
+        Store: true,
+      },
     });
 
     if (!account) {
-      throw new Error(`ORDER_INGEST_ERROR: Marketplace Account ${marketplaceAccountId} not found.`);
+      throw new Error(
+        `ORDER_INGEST_ERROR: Marketplace Account ${marketplaceAccountId} not found.`
+      );
     }
 
-    const companyId = account.store.companyId;
+    const companyId = account.Store.companyId;
 
     const existingOrder = await prisma.order.findFirst({
       where: {
@@ -33,14 +41,20 @@ export class OrderDecouplerService {
 
     if (existingOrder) {
       await prisma.order.update({
-        where: { id: existingOrder.id },
-        data: { status: rawOrder.orderStatus, updatedAt: new Date() },
+        where: {
+          id: existingOrder.id,
+        },
+        data: {
+          status: rawOrder.orderStatus,
+          updatedAt: new Date(),
+        },
       });
+
       return existingOrder.id;
     }
 
-    const lineItemsToCreate: { externalItemId: string; channelSku: string; productVariationId: string | null; title: string; quantity: number; unitPrice: number; totalPrice: number; }[] = [];
-    const reservationItems: { productVariationId: string; warehouseId: string; quantity: number; }[] = [];
+    const lineItemsToCreate: any[] = [];
+    const reservationItems: any[] = [];
 
     for (const item of rawOrder.items) {
       const listing = await prisma.marketplaceListing.findFirst({
@@ -48,10 +62,12 @@ export class OrderDecouplerService {
           marketplaceAccountId,
           channelSku: item.sku,
         },
-        include: { productVariation: true },
+        include: {
+          ProductVariation: true,
+        },
       });
 
-      const productVariationId = listing?.productVariationId || null;
+      const productVariationId = listing?.productVariationId ?? null;
 
       lineItemsToCreate.push({
         externalItemId: item.externalItemId,
@@ -66,61 +82,93 @@ export class OrderDecouplerService {
       if (productVariationId) {
         reservationItems.push({
           productVariationId,
-          warehouseId: process.env.DEFAULT_WAREHOUSE_ID || 'WH-MAIN-01',
+          warehouseId:
+            process.env.DEFAULT_WAREHOUSE_ID || "WH-MAIN-01",
           quantity: item.quantity,
         });
       }
     }
 
-    const newOrder = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const customer = await tx.customer.upsert({
-        where: {
-          companyId_email: {
+    const newOrder = await prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        const email =
+          rawOrder.buyerEmail ??
+          `${rawOrder.buyerName
+            .replace(/\s+/g, "")
+            .toLowerCase()}@marketplace.user`;
+
+        const customer = await tx.customer.upsert({
+          where: {
+            companyId_email: {
+              companyId,
+              email,
+            },
+          },
+          update: {
+            name: rawOrder.buyerName,
+          },
+          create: {
+            id: randomUUID(),
             companyId,
-            email: rawOrder.buyerEmail || `${rawOrder.buyerName.replace(/\s+/g, '').toLowerCase()}@marketplace.user`,
+            name: rawOrder.buyerName,
+            email,
+            updatedAt: new Date(),
           },
-        },
-        update: { name: rawOrder.buyerName },
-        create: {
-          companyId,
-          name: rawOrder.buyerName,
-          email: rawOrder.buyerEmail || `${rawOrder.buyerName.replace(/\s+/g, '').toLowerCase()}@marketplace.user`,
-        },
-      });
+        });
 
-      return tx.order.create({
-        data: {
-          companyId,
-          storeId: account.storeId,
-          marketplaceAccountId,
-          customerId: customer.id,
-          externalOrderId: rawOrder.externalOrderId,
-          status: rawOrder.orderStatus,
-          totalAmount: rawOrder.totalAmount,
-          currency: rawOrder.currency,
-          shippingAddress: rawOrder.shippingAddress as any,
-          items: {
-            create: lineItemsToCreate,
+        return tx.order.create({
+          data: {
+            id: randomUUID(),
+            companyId,
+            storeId: account.Store.id,
+            marketplaceAccountId,
+            customerId: customer.id,
+
+            externalOrderId: rawOrder.externalOrderId,
+
+            // SyncOrderDTO has NO orderNumber
+            orderNumber: rawOrder.externalOrderId,
+
+            status: rawOrder.orderStatus,
+            totalAmount: rawOrder.totalAmount,
+            currency: rawOrder.currency,
+            shippingAddress: rawOrder.shippingAddress as any,
+            updatedAt: new Date(),
+
+            OrderItem: {
+              create: lineItemsToCreate,
+            },
           },
-        },
-      });
-    });
+        });
+      }
+    );
 
-    if (reservationItems.length > 0 && rawOrder.orderStatus === 'PAID') {
+    if (
+      reservationItems.length > 0 &&
+      rawOrder.orderStatus === "PAID"
+    ) {
       try {
-        await this.reservationService.reserveStockForOrder(newOrder.id, reservationItems);
+        await this.reservationService.reserveStockForOrder(
+          newOrder.id,
+          reservationItems
+        );
       } catch (err) {
-        console.error(`[OrderDecouplerService] Stock reservation warning for order ${newOrder.id}:`, err);
+        console.error(
+          `[OrderDecouplerService] Stock reservation warning for order ${newOrder.id}:`,
+          err
+        );
       }
     }
 
     await EventBus.getInstance().publish({
-      eventType: 'ORDER_CREATED',
-      entity: 'ORDER',
+      eventType: "ORDER_CREATED",
+      entity: "ORDER",
       entityId: newOrder.id,
       companyId,
-      brandId: account.store.brandId,
-      payload: { externalOrderId: rawOrder.externalOrderId, status: newOrder.status },
+      payload: {
+        externalOrderId: rawOrder.externalOrderId,
+        status: newOrder.status,
+      },
       timestamp: new Date(),
     });
 

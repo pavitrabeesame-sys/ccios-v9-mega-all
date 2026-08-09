@@ -1,8 +1,15 @@
 import { prisma } from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
 import { TenantContext } from '../../core/tenant/tenant.context';
+import { randomUUID } from 'crypto';
 
-export type LedgerEntryType = 'PURCHASE_RECEIPT' | 'SALES_DEDUCTION' | 'RESERVATION_LOCK' | 'RESERVATION_RELEASE' | 'ADJUSTMENT' | 'RETURN_RESTOCK';
+export type LedgerEntryType =
+  | 'PURCHASE_RECEIPT'
+  | 'SALES_DEDUCTION'
+  | 'RESERVATION_LOCK'
+  | 'RESERVATION_RELEASE'
+  | 'ADJUSTMENT'
+  | 'RETURN_RESTOCK';
 
 export interface LedgerTransactionDTO {
   productVariationId: string;
@@ -18,7 +25,7 @@ export class InventoryLedgerService {
   public async recordTransaction(dto: LedgerTransactionDTO) {
     const scope = TenantContext.getScope();
 
-    return await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const snapshot = await tx.inventorySnapshot.findUnique({
         where: {
           productVariationId_warehouseId: {
@@ -28,8 +35,8 @@ export class InventoryLedgerService {
         },
       });
 
-      const currentAvailable = snapshot ? snapshot.quantityAvailable : 0;
-      const currentReserved = snapshot ? snapshot.quantityReserved : 0;
+      const currentAvailable = snapshot?.quantityAvailable ?? 0;
+      const currentReserved = snapshot?.quantityReserved ?? 0;
 
       let newAvailable = currentAvailable;
       let newReserved = currentReserved;
@@ -40,37 +47,53 @@ export class InventoryLedgerService {
         case 'ADJUSTMENT':
           newAvailable += dto.quantityChange;
           break;
+
         case 'RESERVATION_LOCK':
           if (currentAvailable < Math.abs(dto.quantityChange)) {
-            throw new Error(`INSUFFICIENT_STOCK: Available (${currentAvailable}) is less than requested reservation (${Math.abs(dto.quantityChange)})`);
+            throw new Error(
+              `INSUFFICIENT_STOCK: Available (${currentAvailable}) is less than requested reservation (${Math.abs(dto.quantityChange)})`
+            );
           }
+
           newAvailable -= Math.abs(dto.quantityChange);
           newReserved += Math.abs(dto.quantityChange);
           break;
+
         case 'RESERVATION_RELEASE':
           newReserved -= Math.abs(dto.quantityChange);
           break;
+
         case 'SALES_DEDUCTION':
           newReserved -= Math.abs(dto.quantityChange);
           break;
       }
 
       if (newAvailable < 0 || newReserved < 0) {
-        throw new Error(`LEDGER_INTEGRITY_VIOLATION: Inventory counts cannot fall below zero. Available: ${newAvailable}, Reserved: ${newReserved}`);
+        throw new Error(
+          `LEDGER_INTEGRITY_VIOLATION: Inventory counts cannot fall below zero.`
+        );
       }
 
       const ledgerEntry = await tx.inventoryLedger.create({
         data: {
+          id: randomUUID(),
+
           companyId: scope.companyId,
-          productVariationId: dto.productVariationId,
+
+          ProductVariation: {
+            connect: {
+              id: dto.productVariationId,
+            },
+          },
+
           warehouseId: dto.warehouseId,
-          binLocationId: dto.binLocationId,
+          binLocationId: dto.binLocationId ?? null,
           type: dto.type,
           quantityChange: dto.quantityChange,
           balanceAfterAvailable: newAvailable,
           balanceAfterReserved: newReserved,
           referenceId: dto.referenceId,
-          notes: dto.notes || '',
+          notes: dto.notes ?? null,
         },
       });
 
@@ -81,19 +104,29 @@ export class InventoryLedgerService {
             warehouseId: dto.warehouseId,
           },
         },
+
         update: {
           quantityAvailable: newAvailable,
           quantityReserved: newReserved,
           quantityTotal: newAvailable + newReserved,
           updatedAt: new Date(),
         },
+
         create: {
+          id: randomUUID(),
           companyId: scope.companyId,
-          productVariationId: dto.productVariationId,
+
+          ProductVariation: {
+            connect: {
+              id: dto.productVariationId,
+            },
+          },
+
           warehouseId: dto.warehouseId,
           quantityAvailable: newAvailable,
           quantityReserved: newReserved,
           quantityTotal: newAvailable + newReserved,
+          updatedAt: new Date(),
         },
       });
 
