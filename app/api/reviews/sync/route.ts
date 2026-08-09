@@ -20,6 +20,13 @@ const SHOP_BRANDS: Record<string, string> = {
   "1770621271": "RAV"
 };
 
+function cleanText(val: any, fallback: string): string {
+  if (!val || typeof val !== 'string' || val.trim() === '') {
+    return fallback;
+  }
+  return val.trim();
+}
+
 async function refreshAccessToken(partnerId: string, partnerKey: string, refreshToken: string, shopId: number) {
   try {
     const timestamp = Math.floor(Date.now() / 1000);
@@ -44,6 +51,7 @@ async function refreshAccessToken(partnerId: string, partnerKey: string, refresh
 }
 
 export async function POST(request: Request) {
+  console.log("=== REVIEW SYNC START ===");
   try {
     const partnerId = process.env.SHOPEE_PARTNER_ID;
     const partnerKey = process.env.SHOPEE_PARTNER_KEY;
@@ -56,6 +64,7 @@ export async function POST(request: Request) {
     }
 
     const accounts = await prisma.shopeeAccount.findMany();
+    console.log("Accounts found:", accounts.length);
 
     if (!accounts || accounts.length === 0) {
       return NextResponse.json(
@@ -73,6 +82,8 @@ export async function POST(request: Request) {
 
     for (const account of accounts) {
       const shopId = Number(account.shopId);
+      console.log("Processing shop:", shopId);
+
       let accessToken = account.accessToken;
       const refreshToken = account.refreshToken;
       const assignedBrand = SHOP_BRANDS[String(shopId)] || "BHPC";
@@ -154,31 +165,46 @@ export async function POST(request: Request) {
               const item = commentList[idx];
               const reviewIdStr = String(item.comment_id || `${shopId}-${pageNo}-${idx}`);
 
+              const resolvedProductName = cleanText(
+  item.item_name ||
+  item.product_name ||
+  item.model_name ||
+  item.name ||
+  (item.item_id ? `Shopee Product ${item.item_id}` : ""),
+  "Unknown Product"
+);
+              const resolvedProductSku = cleanText(item.item_sku || item.model_sku, "");
+              const resolvedCustomerName = cleanText(item.buyer_username || item.author_name, "Shopee Buyer");
+              const resolvedReviewText = cleanText(item.comment || item.review || item.content, "");
+
+console.log("Shopee Review Item:", {
+  reviewId: reviewIdStr,
+  itemId: item.item_id,
+  itemName: item.item_name,
+  productName: item.product_name,
+  modelName: item.model_name,
+  resolvedProductName,
+});
+
               await prisma.review.upsert({
                 where: { reviewId: reviewIdStr },
                 update: {
-                  reviewText: item.comment || item.review || item.content || '',
+                  reviewText: resolvedReviewText,
                   rating: Number(item.rating_star || item.rating || 5),
-                  customerName: item.buyer_username || item.author_name || 'Shopee Buyer',
-                  productName:
-    item.item_name ||
-    item.product_name ||
-    "Unknown Product",
-                  productSku: item.item_sku || item.model_sku || null,
+                  customerName: resolvedCustomerName,
+                  productName: resolvedProductName,
+                  productSku: resolvedProductSku,
                   brand: assignedBrand,
                   storeName: `${assignedBrand} Official Store (${shopId})`,
                 },
                 create: {
                   reviewId: reviewIdStr,
                   marketplace: 'SHOPEE',
-                  productName:
-    item.item_name ||
-    item.product_name ||
-    "Unknown Product",
-                  productSku: item.item_sku || item.model_sku || null,
-                  customerName: item.buyer_username || item.author_name || 'Shopee Buyer',
+                  productName: resolvedProductName,
+                  productSku: resolvedProductSku,
+                  customerName: resolvedCustomerName,
                   rating: Number(item.rating_star || item.rating || 5),
-                  reviewText: item.comment || item.review || item.content || '',
+                  reviewText: resolvedReviewText,
                   status: 'PENDING',
                   brand: assignedBrand,
                   storeName: `${assignedBrand} Official Store (${shopId})`
@@ -208,6 +234,7 @@ export async function POST(request: Request) {
       }
     }
 
+    console.log("=== REVIEW SYNC END ===");
     return NextResponse.json({
       success: true,
       syncedCount,
