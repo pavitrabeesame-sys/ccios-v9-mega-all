@@ -1,81 +1,109 @@
-﻿'use client';
+'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export const dynamic = 'force-dynamic';
 
 interface Review {
+  id: string;
   reviewId: string;
-  productName: string;
+  productName: string | null;
   customerName: string;
   storeName: string;
   rating: number;
-  reviewText: string;
+  reviewText: string | null;
   status: string;
   marketplace: string;
-  brand: string;
+  brand: string | null;
 }
 
-const INITIAL_REVIEWS: Review[] = [
-  { reviewId: '1', productName: 'BHPC Classic Polo Tee', customerName: 'hanapi_1987', storeName: 'Beverly Hills Polo Club', rating: 5, reviewText: 'Barang baik boss', status: 'PENDING', marketplace: 'SHOPEE', brand: 'BHPC' },
-  { reviewId: '2', productName: 'Nicole Summer Floral Dress', customerName: 'maialysa', storeName: 'Nicole Collection', rating: 5, reviewText: 'Material is soft and comfortable, love it!', status: 'PENDING', marketplace: 'LAZADA', brand: 'NICOLE' },
-  { reviewId: '3', productName: 'Obermain Leather Executive Wallet', customerName: 'zia080281', storeName: 'Obermain Official', rating: 5, reviewText: 'Sangat kemas jahitannya dan berkualiti.', status: 'PENDING', marketplace: 'SHOPEE', brand: 'OBERMAIN' },
-  { reviewId: '4', productName: 'Hush Puppies Classic Casual Belt', customerName: 'nurazayna', storeName: 'Hush Puppies Store', rating: 5, reviewText: 'Original item, nice packaging and fast delivery.', status: 'PENDING', marketplace: 'SHOPEE', brand: 'HUSH' },
-  { reviewId: '5', productName: 'RAV Design Slim Fit Shirt', customerName: 'jumaliah3303', storeName: 'RAV Design Empire City', rating: 5, reviewText: 'Kain sedap pakai, tak panas.', status: 'PENDING', marketplace: 'LAZADA', brand: 'RAV' }
-];
-
 export default function ReviewsPage() {
-  const [reviews, setReviews] = useState<Review[]>(INITIAL_REVIEWS);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
   const [syncing, setSyncing] = useState<boolean>(false);
-  const [selectedReview, setSelectedReview] = useState<Review | null>(INITIAL_REVIEWS[0]);
+  const [syncProgress, setSyncProgress] = useState<string>('');
+  const [selectedReview, setSelectedReview] = useState<Review | null>(null);
   const [activeTab, setActiveTab] = useState<string>('ALL');
   const [activeMarketplace, setActiveMarketplace] = useState<string>('All');
 
-  const handleSync = async () => {
+  const loadReviews = async () => {
     try {
-      setSyncing(true);
-      const res = await fetch('/api/reviews/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brand: activeTab })
-      });
+      const res = await fetch('/api/reviews');
       const data = await res.json();
-      
-      if (data.success && data.reviews.length > 0) {
-        // Map real Shopee API response into Review format
-        const liveMapped = data.reviews.map((item: any, idx: number) => ({
-          reviewId: item.comment_id || String(idx + 100),
-          productName: item.product_name || 'Shopee Live Product',
-          customerName: item.author_name || 'Shopee Customer',
-          storeName: activeTab === 'ALL' ? 'Shopee Official Store' : activeTab,
-          rating: item.rating_star || 5,
-          reviewText: item.comment || 'No review text provided',
-          status: 'PENDING',
-          marketplace: 'SHOPEE',
-          brand: activeTab === 'ALL' ? 'BHPC' : activeTab
-        }));
-        setReviews(prev => [...liveMapped, ...prev]);
-        alert(`Successfully synchronized ${liveMapped.length} live reviews from Shopee!`);
+      if (Array.isArray(data)) {
+        setReviews(data);
+        if (!selectedReview && data.length > 0) {
+          setSelectedReview(data[0]);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load reviews:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadReviews();
+  }, []);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const shopsRes = await fetch('/api/shopee/shops');
+      const shopsData = await shopsRes.json();
+      const shopIds: string[] = shopsData.shopIds || [];
+
+      if (shopIds.length === 0) {
+        alert('No authorized Shopee shops found.');
+        return;
+      }
+
+      let totalSynced = 0;
+      const errors: string[] = [];
+
+      for (let i = 0; i < shopIds.length; i++) {
+        const shopId = shopIds[i];
+        setSyncProgress(`Syncing shop ${i + 1}/${shopIds.length}...`);
+        try {
+          const res = await fetch(`/api/reviews/sync?shopId=${shopId}`, { method: 'POST' });
+          const data = await res.json();
+          if (data.success) {
+            totalSynced += data.syncedCount || 0;
+          } else {
+            errors.push(`Shop ${shopId}: ${data.error}`);
+          }
+        } catch (err: any) {
+          errors.push(`Shop ${shopId}: ${err.message}`);
+        }
+        await loadReviews();
+      }
+
+      setSyncProgress('');
+      if (errors.length > 0) {
+        alert(`Synced ${totalSynced} reviews. ${errors.length} shop(s) had issues:\n${errors.join('\n')}`);
       } else {
-        alert(data.message || 'Synchronization complete. Connected to Shopee API endpoints.');
+        alert(`Successfully synchronized ${totalSynced} reviews across ${shopIds.length} shops!`);
       }
     } catch (err) {
       console.error('Sync failed:', err);
-      alert('Failed to connect to Shopee API sync route.');
+      alert('Failed to connect to Shopee sync route.');
     } finally {
       setSyncing(false);
+      setSyncProgress('');
     }
   };
 
   const filteredReviews = reviews.filter((r) => {
-    const brandMatch = activeTab === 'ALL' || r.brand.toUpperCase() === activeTab || r.storeName.toUpperCase().includes(activeTab);
-    const marketMatch = activeMarketplace === 'All' || r.marketplace.toUpperCase() === activeMarketplace.toUpperCase();
+    const brand = (r.brand || '').toUpperCase();
+    const store = (r.storeName || '').toUpperCase();
+    const brandMatch = activeTab === 'ALL' || brand === activeTab || store.includes(activeTab);
+    const marketMatch = activeMarketplace === 'All' || (r.marketplace || '').toUpperCase() === activeMarketplace.toUpperCase();
     return brandMatch && marketMatch;
   });
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col flex-1">
-      {/* Header Bar */}
       <header className="border-b border-gray-800 px-8 py-4 flex items-center justify-between bg-gray-900">
         <div>
           <div className="flex items-center gap-3">
@@ -96,6 +124,9 @@ export default function ReviewsPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          {syncing && syncProgress && (
+            <span className="text-xs text-blue-400">{syncProgress}</span>
+          )}
           <button
             onClick={handleSync}
             disabled={syncing}
@@ -108,24 +139,15 @@ export default function ReviewsPage() {
           </button>
 
           <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
-            <span className="text-gray-400">Reply Rate</span>
-            <span className="text-emerald-400 font-bold">94%</span>
-          </div>
-          <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
-            <span className="text-gray-400">Avg</span>
-            <span className="text-amber-400 font-bold">4.8★</span>
-          </div>
-          <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
             <span className="text-gray-400">Pending</span>
             <span className="text-amber-500 font-bold">{reviews.filter(r => r.status === 'PENDING').length}</span>
           </div>
         </div>
       </header>
 
-      {/* Filter Bar */}
       <div className="px-8 py-4 border-b border-gray-800 bg-gray-900 flex items-center justify-between">
         <div className="flex gap-2">
-          {['ALL', 'RAV', 'NICOLE', 'OBERMAIN', 'HUSH', 'BHPC'].map((brand) => (
+          {['ALL', 'RAV', 'NICOLE', 'OBERMAIN', 'HUSH', 'BHPC', 'JOHN_LANGFORD'].map((brand) => (
             <button
               key={brand}
               onClick={() => setActiveTab(brand)}
@@ -157,48 +179,48 @@ export default function ReviewsPage() {
         </div>
       </div>
 
-      {/* Content Body: Split View */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 p-8 gap-6 overflow-hidden bg-gray-950">
-        {/* Left List */}
         <div className="lg:col-span-2 space-y-4 overflow-y-auto pr-2 max-h-[calc(100vh-220px)]">
-          {filteredReviews.length === 0 ? (
+          {loading ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-gray-400">
+              Loading reviews...
+            </div>
+          ) : filteredReviews.length === 0 ? (
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-gray-400">
               No reviews found for this filter. Click "Sync Live Reviews" to fetch from Shopee.
             </div>
           ) : (
             filteredReviews.map((review, idx) => (
               <div
-                key={review.reviewId || idx}
+                key={review.id || review.reviewId || idx}
                 onClick={() => setSelectedReview(review)}
                 className={`border rounded-xl p-5 cursor-pointer transition-all shadow-sm ${
-                  selectedReview?.reviewId === review.reviewId 
-                    ? 'border-blue-500 bg-gray-800' 
+                  selectedReview?.reviewId === review.reviewId
+                    ? 'border-blue-500 bg-gray-800'
                     : 'bg-gray-900 border-gray-800 hover:border-gray-700'
                 }`}
               >
                 <div className="flex justify-between items-start mb-2">
-                  <h3 className="font-semibold text-white text-sm">{review.productName}</h3>
+                  <h3 className="font-semibold text-white text-sm">{review.productName || 'Unknown Product'}</h3>
                   <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium border border-amber-500/20">
                     {review.status}
                   </span>
                 </div>
                 <p className="text-xs text-gray-400 mb-2">{review.customerName} • {review.storeName}</p>
                 <div className="text-amber-400 text-xs mb-3">
-                  {'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)} 
+                  {'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}
                   <span className="text-gray-500 ml-2 font-mono uppercase">({review.marketplace})</span>
                 </div>
-                <p className="text-sm text-gray-300 italic">"{review.reviewText}"</p>
+                <p className="text-sm text-gray-300 italic">"{review.reviewText || ''}"</p>
               </div>
             ))
           )}
         </div>
 
-        {/* Right AI Generator Panel */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex flex-col justify-between h-fit">
           <div>
             <div className="flex items-center justify-between mb-4">
               <span className="text-xs font-bold tracking-wider text-purple-400 uppercase">✦ NOVA AI REPLY GENERATOR</span>
-              <span className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-medium">Confidence 92%</span>
             </div>
 
             <div className="mb-4">
@@ -212,13 +234,6 @@ export default function ReviewsPage() {
                 ) : (
                   <p className="text-gray-500 italic">Select a review from the list to view options.</p>
                 )}
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <p className="text-xs text-gray-400 uppercase font-semibold mb-2">TONE</p>
-              <div className="bg-gray-950 border border-gray-800 rounded-lg p-2 text-xs text-white">
-                {selectedReview?.storeName || 'Store'} Artisan rugged warm
               </div>
             </div>
 
