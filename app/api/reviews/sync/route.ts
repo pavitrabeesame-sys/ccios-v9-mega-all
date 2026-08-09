@@ -160,7 +160,10 @@ export async function POST(request: Request) {
                   reviewText: item.comment || item.review || item.content || '',
                   rating: Number(item.rating_star || item.rating || 5),
                   customerName: item.buyer_username || item.author_name || 'Shopee Buyer',
-                  productName: item.item_name || item.product_name || null,
+                  productName:
+    item.item_name ||
+    item.product_name ||
+    "Unknown Product",
                   productSku: item.item_sku || item.model_sku || null,
                   brand: assignedBrand,
                   storeName: `${assignedBrand} Official Store (${shopId})`,
@@ -168,7 +171,10 @@ export async function POST(request: Request) {
                 create: {
                   reviewId: reviewIdStr,
                   marketplace: 'SHOPEE',
-                  productName: item.item_name || item.product_name || null,
+                  productName:
+    item.item_name ||
+    item.product_name ||
+    "Unknown Product",
                   productSku: item.item_sku || item.model_sku || null,
                   customerName: item.buyer_username || item.author_name || 'Shopee Buyer',
                   rating: Number(item.rating_star || item.rating || 5),

@@ -242,7 +242,7 @@ model Review {
   marketplace  Marketplace
   storeName    String
   orderNumber  String?
-  productName  String
+  productName  String?
   productSku   String?
   customerName String
   rating       Int
