@@ -5,13 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "sync-catalog": "node src/scripts/syncCatalog.js"
   },
   "dependencies": {
-    "@prisma/client": "^5.10.0",
+    "@prisma/client": "^6.19.3",
     "autoprefixer": "^10.5.4",
     "bcryptjs": "^3.0.3",
     "bullmq": "^6.0.9",
