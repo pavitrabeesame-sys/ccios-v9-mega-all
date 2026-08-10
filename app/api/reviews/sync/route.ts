@@ -6,22 +6,24 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const SHOP_BRANDS: Record<string, string> = {
-  "74401016": "RAV",
-  "115383763": "RAV",
-  "170808053": "JOHN_LANGFORD",
-  "170811257": "BHPC",
-  "282544493": "HUSH",
-  "469553987": "OBERMAIN",
-  "1637647671": "OBERMAIN",
-  "1747523033": "OBERMAIN",
-  "1747523036": "OBERMAIN",
-  "190669704": "NICOLE",
-  "66854646": "NICOLE",
-  "1770621264": "RAV",
-  "1770621271": "RAV"
+  '74401016': 'RAV',
+  '115383763': 'RAV',
+  '170808053': 'JOHN_LANGFORD',
+  '170811257': 'BHPC',
+  '282544493': 'HUSH',
+  '469553987': 'OBERMAIN',
+  '1637647671': 'OBERMAIN',
+  '1747523033': 'OBERMAIN',
+  '1747523036': 'OBERMAIN',
+  '190669704': 'NICOLE',
+  '66854646': 'NICOLE',
+  '1770621264': 'RAV',
+  '1770621271': 'RAV',
 };
 
-const MAX_PAGES_PER_CALL = 15;
+const MAX_PAGES_PER_CALL = 5;
+const MAX_SHOPS_PER_CALL = 2;
+const PAGE_SIZE = 50;
 
 function cleanText(val: any, fallback: string): string {
   if (!val || typeof val !== 'string' || val.trim() === '') {
@@ -57,27 +59,32 @@ async function refreshAccessToken(
     const res = await fetch(url, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         partner_id: Number(partnerId),
         refresh_token: refreshToken,
-        shop_id: Number(shopId)
-      })
+        shop_id: Number(shopId),
+      }),
     });
 
     const data = await res.json();
 
+    console.log(
+      `[Shopee Token Refresh] shop=${shopId}`,
+      JSON.stringify(data, null, 2)
+    );
+
     if (data.access_token) {
       return {
         accessToken: data.access_token,
-        refreshToken: data.refresh_token || refreshToken
+        refreshToken: data.refresh_token || refreshToken,
       };
     }
 
     console.error(
       `[Shopee Token Refresh FAILED] shop=${shopId}`,
-      data
+      JSON.stringify(data, null, 2)
     );
   } catch (e) {
     console.error(
@@ -92,7 +99,8 @@ async function refreshAccessToken(
 async function processShop(
   account: any,
   partnerId: string,
-  partnerKey: string
+  partnerKey: string,
+  requestedPageNo: number
 ) {
   const shopId = Number(account.shopId);
 
@@ -100,7 +108,7 @@ async function processShop(
   const refreshToken = account.refreshToken;
 
   const assignedBrand =
-    SHOP_BRANDS[String(shopId)] || "BHPC";
+    SHOP_BRANDS[String(shopId)] || 'BHPC';
 
   let syncedCount = 0;
   let shopHasError = false;
@@ -110,12 +118,20 @@ async function processShop(
   if (!accessToken) {
     return {
       shopId,
+      brand: assignedBrand,
       synced: 0,
-      error: 'No access token available'
+      error: 'No access token available',
+      hasMore: false,
+      pageNo: requestedPageNo,
+      nextPageNo: null,
     };
   }
 
-  let pageNo = 1;
+  let pageNo =
+    Number.isInteger(requestedPageNo) && requestedPageNo > 0
+      ? requestedPageNo
+      : 1;
+
   let hasMore = true;
   let pagesProcessed = 0;
 
@@ -145,22 +161,22 @@ async function processShop(
       `&access_token=${accessToken}` +
       `&shop_id=${shopId}` +
       `&sign=${sign}` +
-      `&page_size=50` +
+      `&page_size=${PAGE_SIZE}` +
       `&page_no=${pageNo}`;
 
     try {
       let res = await fetch(url, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json'
-        }
+          'Content-Type': 'application/json',
+        },
       });
 
       let shopeeResponse = await res.json();
 
       const errorText =
-        `${shopeeResponse.error || ''} ` +
-        `${shopeeResponse.message || ''}`
+        `${shopeeResponse?.error || ''} ` +
+        `${shopeeResponse?.message || ''}`
           .toLowerCase();
 
       // ==========================================
@@ -169,7 +185,8 @@ async function processShop(
 
       if (
         errorText.includes('token') ||
-        errorText.includes('auth')
+        errorText.includes('auth') ||
+        errorText.includes('access_token')
       ) {
         if (refreshToken) {
           const refreshed =
@@ -186,14 +203,14 @@ async function processShop(
 
             await prisma.shopeeAccount.updateMany({
               where: {
-                shopId: BigInt(shopId)
+                shopId: BigInt(shopId),
               },
               data: {
                 accessToken:
                   refreshed.accessToken,
                 refreshToken:
-                  refreshed.refreshToken
-              }
+                  refreshed.refreshToken,
+              },
             });
 
             const newTimestamp =
@@ -215,7 +232,7 @@ async function processShop(
               `&access_token=${accessToken}` +
               `&shop_id=${shopId}` +
               `&sign=${newSign}` +
-              `&page_size=50` +
+              `&page_size=${PAGE_SIZE}` +
               `&page_no=${pageNo}`;
 
             const retryRes =
@@ -223,8 +240,8 @@ async function processShop(
                 method: 'GET',
                 headers: {
                   'Content-Type':
-                    'application/json'
-                }
+                    'application/json',
+                },
               });
 
             shopeeResponse =
@@ -251,9 +268,11 @@ async function processShop(
       // SHOPEE API ERROR
       // ==========================================
 
-      if (shopeeResponse.error) {
+      if (shopeeResponse?.error) {
         failedReasons.push(
-          `Page ${pageNo}: ${shopeeResponse.error} - ${shopeeResponse.message || ''}`
+          `Page ${pageNo}: ${shopeeResponse.error} - ${
+            shopeeResponse.message || ''
+          }`
         );
 
         shopHasError = true;
@@ -265,9 +284,9 @@ async function processShop(
       // ==========================================
 
       const commentList =
-        shopeeResponse.response?.item_comment_list ||
-        shopeeResponse.response?.comment_list ||
-        shopeeResponse.response?.list;
+        shopeeResponse?.response?.item_comment_list ||
+        shopeeResponse?.response?.comment_list ||
+        shopeeResponse?.response?.list;
 
       if (
         commentList &&
@@ -285,7 +304,7 @@ async function processShop(
           const reviewIdStr =
             String(
               item.comment_id ||
-              `${shopId}-${pageNo}-${idx}`
+                `${shopId}-${pageNo}-${idx}`
             );
 
           const resolvedProductName =
@@ -324,28 +343,34 @@ async function processShop(
               ''
             );
 
+          const resolvedRating =
+            Number(
+              item.rating_star ||
+                item.rating ||
+                5
+            );
+
           // ==========================================
           // SAVE REVIEW
           // ==========================================
 
           await prisma.review.upsert({
             where: {
-              reviewId: reviewIdStr
+              reviewId: reviewIdStr,
             },
 
-            // Existing reviews receive shopId here
             update: {
-              shopId: BigInt(shopId),
+              shopId:
+                BigInt(shopId),
+
+              marketplace:
+                'SHOPEE',
 
               reviewText:
                 resolvedReviewText,
 
               rating:
-                Number(
-                  item.rating_star ||
-                    item.rating ||
-                    5
-                ),
+                resolvedRating,
 
               customerName:
                 resolvedCustomerName,
@@ -360,10 +385,9 @@ async function processShop(
                 assignedBrand,
 
               storeName:
-                `${assignedBrand} Official Store (${shopId})`
+                `${assignedBrand} Official Store (${shopId})`,
             },
 
-            // New reviews receive shopId here
             create: {
               reviewId:
                 reviewIdStr,
@@ -384,11 +408,7 @@ async function processShop(
                 resolvedCustomerName,
 
               rating:
-                Number(
-                  item.rating_star ||
-                    item.rating ||
-                    5
-                ),
+                resolvedRating,
 
               reviewText:
                 resolvedReviewText,
@@ -400,8 +420,8 @@ async function processShop(
                 assignedBrand,
 
               storeName:
-                `${assignedBrand} Official Store (${shopId})`
-            }
+                `${assignedBrand} Official Store (${shopId})`,
+            },
           });
 
           syncedCount++;
@@ -411,9 +431,14 @@ async function processShop(
         // PAGINATION
         // ==========================================
 
+        const apiHasMore =
+          Boolean(
+            shopeeResponse?.response?.more
+          );
+
         if (
-          commentList.length < 50 ||
-          !shopeeResponse.response?.more
+          commentList.length < PAGE_SIZE ||
+          !apiHasMore
         ) {
           hasMore = false;
         } else {
@@ -422,7 +447,6 @@ async function processShop(
       } else {
         hasMore = false;
       }
-
     } catch (err: any) {
       console.error(
         `Error fetching reviews for shop ${shopId} page ${pageNo}:`,
@@ -431,7 +455,7 @@ async function processShop(
 
       failedReasons.push(
         `Page ${pageNo}: ${
-          err.message ||
+          err?.message ||
           'Unknown network error'
         }`
       );
@@ -441,6 +465,11 @@ async function processShop(
     }
   }
 
+  const nextPageNo =
+    hasMore && !shopHasError
+      ? pageNo
+      : null;
+
   return {
     shopId,
     brand: assignedBrand,
@@ -448,7 +477,13 @@ async function processShop(
     error: shopHasError
       ? failedReasons.join('; ')
       : null,
-    hasMore
+    hasMore,
+    pageNo:
+      hasMore
+        ? pageNo
+        : null,
+    nextPageNo,
+    pagesProcessed,
   };
 }
 
@@ -460,40 +495,65 @@ export async function POST(
   request: Request
 ) {
   console.log(
-    "=== REVIEW SYNC START ==="
+    '=== REVIEW SYNC START ==='
   );
 
   try {
+    // ==========================================
+    // SHOPEE CREDENTIALS
+    // ==========================================
+
     const partnerId =
       process.env.SHOPEE_PARTNER_ID;
 
     const partnerKey =
       process.env.SHOPEE_PARTNER_KEY;
 
-    if (!partnerId || !partnerKey) {
+    if (
+      !partnerId ||
+      !partnerKey
+    ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            'Missing Shopee API partner credentials in environment variables.'
+            'Missing Shopee API partner credentials in environment variables.',
         },
         {
-          status: 400
+          status: 400,
         }
       );
     }
 
-    const { searchParams } =
-      new URL(request.url);
+    // ==========================================
+    // QUERY PARAMETERS
+    // ==========================================
+
+    const {
+      searchParams,
+    } = new URL(request.url);
 
     const shopIdParam =
       searchParams.get('shopId');
+
+    const pageNoParam =
+      searchParams.get('pageNo');
+
+    const requestedPageNo =
+      pageNoParam &&
+      Number(pageNoParam) > 0
+        ? Number(pageNoParam)
+        : 1;
+
+    // ==========================================
+    // LOAD ACCOUNTS
+    // ==========================================
 
     const accounts =
       await prisma.shopeeAccount.findMany();
 
     console.log(
-      "Accounts found:",
+      'Accounts found:',
       accounts.length
     );
 
@@ -505,19 +565,23 @@ export async function POST(
         {
           success: false,
           error:
-            "No Shopee accounts found. Please authorize your Shopee shops first."
+            'No Shopee accounts found. Please authorize your Shopee shops first.',
         },
         {
-          status: 400
+          status: 400,
         }
       );
     }
 
-    const targetAccounts =
+    // ==========================================
+    // SELECT TARGET SHOPS
+    // ==========================================
+
+    let targetAccounts =
       shopIdParam
         ? accounts.filter(
-            a =>
-              String(a.shopId) ===
+            (account) =>
+              String(account.shopId) ===
               String(shopIdParam)
           )
         : accounts;
@@ -530,74 +594,139 @@ export async function POST(
         {
           success: false,
           error:
-            `Shop ${shopIdParam} not found among authorized accounts.`
+            `Shop ${shopIdParam} not found among authorized accounts.`,
         },
         {
-          status: 404
+          status: 404,
         }
       );
     }
 
-    const results = [];
+    // ==========================================
+    // SAFETY LIMIT FOR ALL-SHOP REQUESTS
+    //
+    // A single-shop request can process one shop.
+    // An all-shop request processes only 2 shops.
+    // This prevents Vercel 60-second timeouts.
+    // ==========================================
+
+    const totalAuthorizedShops =
+      targetAccounts.length;
+
+    if (!shopIdParam) {
+      targetAccounts =
+        targetAccounts.slice(
+          0,
+          MAX_SHOPS_PER_CALL
+        );
+    }
+
+    console.log(
+      'Target shops:',
+      targetAccounts.map(
+        (account) =>
+          String(account.shopId)
+      )
+    );
+
+    // ==========================================
+    // PROCESS SHOPS
+    // ==========================================
+
+    const results: any[] = [];
 
     for (
       const account of targetAccounts
     ) {
       console.log(
-        "Processing shop:",
-        account.shopId
+        'Processing shop:',
+        account.shopId,
+        'page:',
+        requestedPageNo
       );
 
       const result =
         await processShop(
           account,
           partnerId,
-          partnerKey
+          partnerKey,
+          requestedPageNo
         );
 
       results.push(result);
     }
 
+    // ==========================================
+    // SUMMARY
+    // ==========================================
+
     const syncedCount =
       results.reduce(
-        (sum, r) =>
-          sum + r.synced,
+        (sum, result) =>
+          sum +
+          Number(result.synced || 0),
         0
       );
 
     const successfulShops =
       results.filter(
-        r => !r.error
+        (result) =>
+          !result.error
       ).length;
 
     const failedShops =
       results
-        .filter(r => r.error)
+        .filter(
+          (result) =>
+            result.error
+        )
         .map(
-          r =>
-            `${r.shopId}: ${r.error}`
+          (result) =>
+            `${result.shopId}: ${result.error}`
         );
 
+    const hasMore =
+      results.some(
+        (result) =>
+          result.hasMore
+      );
+
+    // ==========================================
+    // RESPONSE
+    // ==========================================
+
     console.log(
-      "=== REVIEW SYNC END ==="
+      '=== REVIEW SYNC END ==='
     );
 
     return NextResponse.json({
       success: true,
+
       syncedCount,
+
       processedShops:
         targetAccounts.length,
+
+      totalAuthorizedShops,
+
       successfulShops,
+
       failedShopCount:
         failedShops.length,
+
       failedShops,
+
+      hasMore,
+
+      pageNo:
+        requestedPageNo,
+
       shopResults:
         results,
 
       message:
-        `Synchronized ${syncedCount} reviews across ${successfulShops}/${targetAccounts.length} shop(s).`
+        `Synchronized ${syncedCount} reviews across ${successfulShops}/${targetAccounts.length} shop(s).`,
     });
-
   } catch (error: any) {
     console.error(
       'Shopee Sync Error:',
@@ -608,10 +737,11 @@ export async function POST(
       {
         success: false,
         error:
-          error.message
+          error?.message ||
+          'Unknown error',
       },
       {
-        status: 500
+        status: 500,
       }
     );
   }
