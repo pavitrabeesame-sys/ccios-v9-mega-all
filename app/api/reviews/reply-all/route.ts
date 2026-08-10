@@ -5,14 +5,6 @@ import { prisma } from '@/lib/prisma';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-function extractShopId(storeName: string): string | null {
-  const match = storeName.match(/\((\d+)\)\s*$/);
-  if (match) return match[1];
-
-  const fallback = storeName.match(/(\d+)\s*$/);
-  return fallback ? fallback[1] : null;
-}
-
 async function refreshAccessToken(
   partnerId: string,
   partnerKey: string,
@@ -126,6 +118,10 @@ export async function POST(req: Request) {
 
     /*
      * GROUP REVIEWS BY SHOPEE SHOP
+     *
+     * IMPORTANT:
+     * We now use review.shopId directly.
+     * We do NOT attempt to determine the shop from storeName.
      */
     const byShop: Record<string, typeof reviews> = {};
     const skipped: string[] = [];
@@ -138,11 +134,13 @@ export async function POST(req: Request) {
         continue;
       }
 
-      const shopId = extractShopId(review.storeName || '');
+      const shopId = review.shopId
+        ? String(review.shopId)
+        : null;
 
       if (!shopId) {
         skipped.push(
-          `${review.id}: could not determine shop ID from storeName`
+          `${review.id}: no Shopee shop ID assigned to review`
         );
         continue;
       }
@@ -344,7 +342,8 @@ export async function POST(req: Request) {
         ) {
           const errorMessage =
             `${shopeeResponse?.error || 'HTTP_ERROR'}: ${
-              shopeeResponse?.message || 'Shopee API request failed'
+              shopeeResponse?.message ||
+              'Shopee API request failed'
             }`;
 
           console.error(
@@ -388,12 +387,13 @@ export async function POST(req: Request) {
         );
 
         /*
-         * If Shopee returned no result list, DO NOT automatically
-         * mark everything successful.
-         *
-         * We need explicit confirmation from Shopee.
+         * If Shopee returned no result list,
+         * DO NOT mark everything successful.
          */
-        if (!Array.isArray(resultList) || resultList.length === 0) {
+        if (
+          !Array.isArray(resultList) ||
+          resultList.length === 0
+        ) {
           console.error(
             `[Shopee Bulk Reply] No result_list returned for shop ${shopId}`
           );
@@ -403,7 +403,8 @@ export async function POST(req: Request) {
               id: r.id,
               reviewId: r.reviewId,
               success: false,
-              error: 'Shopee returned no per-comment result_list',
+              error:
+                'Shopee returned no per-comment result_list',
               shopeeResponse,
             });
           }
@@ -412,7 +413,7 @@ export async function POST(req: Request) {
         }
 
         /*
-         * MATCH EACH REVIEW BY NORMALIZED COMMENT ID
+         * MATCH EACH REVIEW BY COMMENT ID
          */
         for (const r of shopReviews) {
           const reviewId = String(r.reviewId);
@@ -434,7 +435,8 @@ export async function POST(req: Request) {
               id: r.id,
               reviewId: r.reviewId,
               success: false,
-              error: 'Shopee returned no result for this comment',
+              error:
+                'Shopee returned no result for this comment',
               shopeeResponse: resultList,
             });
 
@@ -456,7 +458,8 @@ export async function POST(req: Request) {
               success: false,
               error: {
                 failError:
-                  result.fail_error || 'UNKNOWN_SHOPEE_ERROR',
+                  result.fail_error ||
+                  'UNKNOWN_SHOPEE_ERROR',
                 failMessage:
                   result.fail_message ||
                   result.message ||

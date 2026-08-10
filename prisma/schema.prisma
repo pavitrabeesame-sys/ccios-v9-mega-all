@@ -120,6 +120,7 @@ model Review {
   id           String       @id @default(uuid())
   reviewId     String       @unique
   marketplace  Marketplace
+  shopId       BigInt?
   storeName    String
   orderNumber  String?
   productName  String?
