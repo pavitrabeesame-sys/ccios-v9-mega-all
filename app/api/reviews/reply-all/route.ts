@@ -6,8 +6,11 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 function extractShopId(storeName: string): string | null {
-  const match = storeName.match(/(\d+)\s*$/);
-  return match ? match[1] : null;
+  const match = storeName.match(/\((\d+)\)\s*$/);
+  if (match) return match[1];
+
+  const fallback = storeName.match(/(\d+)\s*$/);
+  return fallback ? fallback[1] : null;
 }
 
 async function refreshAccessToken(
