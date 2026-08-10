@@ -1,6 +1,5 @@
-﻿import { NextResponse } from 'next/server';
-// Adjust relative path if prisma.ts is at src/lib/prisma.ts vs lib/prisma.ts:
-import { prisma } from '../../../lib/prisma'; // or '../../../src/lib/prisma'
+import { NextResponse } from 'next/server';
+import { prisma } from '../../../lib/prisma';
 
 export async function GET() {
   try {
@@ -8,12 +7,27 @@ export async function GET() {
       orderBy: { createdAt: 'desc' },
     });
 
-    return NextResponse.json(reviews);
+    // Convert BigInt fields (shopId) so NextResponse can serialize them.
+    const serializedReviews = reviews.map((review) => ({
+      ...review,
+      shopId: review.shopId !== null
+        ? review.shopId.toString()
+        : null,
+    }));
+
+    return NextResponse.json(serializedReviews);
   } catch (error: any) {
     console.error('API Error fetching reviews:', error);
+
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch reviews' },
-      { status: 500 }
+      {
+        error:
+          error.message ||
+          'Failed to fetch reviews',
+      },
+      {
+        status: 500,
+      }
     );
   }
 }

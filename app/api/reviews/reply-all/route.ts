@@ -70,6 +70,10 @@ async function refreshAccessToken(
 
 export async function POST(req: Request) {
   try {
+    // =========================================================
+    // SHOPEE CREDENTIALS
+    // =========================================================
+
     const partnerId = process.env.SHOPEE_PARTNER_ID;
     const partnerKey = process.env.SHOPEE_PARTNER_KEY;
 
@@ -83,6 +87,10 @@ export async function POST(req: Request) {
       );
     }
 
+    // =========================================================
+    // REQUEST BODY
+    // =========================================================
+
     const { ids } = await req.json();
 
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -95,38 +103,90 @@ export async function POST(req: Request) {
       );
     }
 
+    // =========================================================
+    // LOAD ONLY ELIGIBLE SHOPEE REVIEWS
+    // =========================================================
+
     const reviews = await prisma.review.findMany({
       where: {
         id: {
           in: ids,
         },
+
+        marketplace: 'SHOPEE',
+
+        status: {
+          not: 'REPLIED',
+        },
+
         aiReply: {
+          not: null,
+        },
+
+        shopId: {
           not: null,
         },
       },
     });
 
-    if (reviews.length === 0) {
+    // =========================================================
+    // SAFETY FILTER
+    //
+    // Do not send replies containing placeholder text.
+    // =========================================================
+
+    const eligibleReviews = reviews.filter((review) => {
+      const reply = (review.aiReply || '').trim();
+
+      if (!reply) {
+        return false;
+      }
+
+      // Reject known placeholders and any bracketed placeholder text.
+const placeholders = [
+  '[Company Name]',
+  '[Your Company Name]',
+  '[Customer Service Team]',
+  '[Your Customer Service Team]',
+  '[Customer Service]',
+];
+
+const hasKnownPlaceholder = placeholders.some((placeholder) =>
+  reply.includes(placeholder)
+);
+
+const hasBracketPlaceholder = /\[[^\]]+\]/.test(reply);
+
+return !hasKnownPlaceholder && !hasBracketPlaceholder;
+    });
+
+    // =========================================================
+    // NO ELIGIBLE REVIEWS
+    // =========================================================
+
+    if (eligibleReviews.length === 0) {
       return NextResponse.json(
         {
           success: false,
-          error: 'No reviews with AI replies found for the given ids.',
+          error:
+            'No eligible Shopee reviews found. Reviews must have an AI reply, a Shopee shop ID, must not already be REPLIED, and must not contain placeholder text.',
         },
         { status: 400 }
       );
     }
 
-    /*
-     * GROUP REVIEWS BY SHOPEE SHOP
-     *
-     * IMPORTANT:
-     * We now use review.shopId directly.
-     * We do NOT attempt to determine the shop from storeName.
-     */
+    // =========================================================
+    // GROUP REVIEWS BY SHOPEE SHOP
+    //
+    // IMPORTANT:
+    // Use review.shopId directly.
+    // NEVER determine shop from storeName.
+    // =========================================================
+
     const byShop: Record<string, typeof reviews> = {};
     const skipped: string[] = [];
 
-    for (const review of reviews) {
+    for (const review of eligibleReviews) {
       if (review.marketplace !== 'SHOPEE') {
         skipped.push(
           `${review.id}: not a Shopee review (${review.marketplace})`
@@ -154,15 +214,20 @@ export async function POST(req: Request) {
 
     const results: any[] = [];
 
-    /*
-     * PROCESS EACH SHOPEE SHOP
-     */
+    // =========================================================
+    // PROCESS EACH SHOPEE SHOP SEPARATELY
+    // =========================================================
+
     for (const shopId of Object.keys(byShop)) {
       const shopReviews = byShop[shopId];
 
       console.log(
         `[Shopee Bulk Reply] Processing shop ${shopId} with ${shopReviews.length} review(s)`
       );
+
+      // =======================================================
+      // LOAD SHOPEE ACCOUNT FOR THIS EXACT SHOP
+      // =======================================================
 
       const account = await prisma.shopeeAccount.findUnique({
         where: {
@@ -190,9 +255,10 @@ export async function POST(req: Request) {
       let accessToken = account.accessToken;
       const refreshToken = account.refreshToken;
 
-      /*
-       * SHOPEE BATCH REQUEST
-       */
+      // =======================================================
+      // BUILD SHOPEE COMMENT LIST
+      // =======================================================
+
       const commentList = shopReviews.map((r) => ({
         comment_id: Number(r.reviewId),
         comment: r.aiReply,
@@ -210,20 +276,15 @@ export async function POST(req: Request) {
         )
       );
 
+      // =======================================================
+      // SHOPEE API CALL
+      // =======================================================
+
       const doCall = async (token: string) => {
         const timestamp = Math.floor(Date.now() / 1000);
 
         const path = '/api/v2/product/reply_comment';
 
-        /*
-         * Shopee product API signature:
-         *
-         * partner_id
-         * + path
-         * + timestamp
-         * + access_token
-         * + shop_id
-         */
         const baseString =
           `${partnerId}${path}${timestamp}${token}${shopId}`;
 
@@ -279,15 +340,17 @@ export async function POST(req: Request) {
       };
 
       try {
-        /*
-         * FIRST ATTEMPT
-         */
+        // =====================================================
+        // FIRST ATTEMPT
+        // =====================================================
+
         let callResult = await doCall(accessToken);
         let shopeeResponse = callResult.data;
 
-        /*
-         * TOKEN / AUTH ERROR
-         */
+        // =====================================================
+        // TOKEN / AUTH ERROR
+        // =====================================================
+
         const errorText =
           `${shopeeResponse?.error || ''} ${
             shopeeResponse?.message || ''
@@ -318,23 +381,26 @@ export async function POST(req: Request) {
               where: {
                 shopId: BigInt(shopId),
               },
+
               data: {
                 accessToken: refreshed.accessToken,
                 refreshToken: refreshed.refreshToken,
               },
             });
 
-            /*
-             * SECOND ATTEMPT WITH NEW TOKEN
-             */
+            // =================================================
+            // SECOND ATTEMPT WITH NEW TOKEN
+            // =================================================
+
             callResult = await doCall(accessToken);
             shopeeResponse = callResult.data;
           }
         }
 
-        /*
-         * TOP-LEVEL SHOPEE ERROR
-         */
+        // =====================================================
+        // TOP-LEVEL SHOPEE ERROR
+        // =====================================================
+
         if (
           shopeeResponse?.error ||
           callResult.httpStatus < 200 ||
@@ -373,9 +439,10 @@ export async function POST(req: Request) {
           continue;
         }
 
-        /*
-         * SHOPEE PER-COMMENT RESULT
-         */
+        // =====================================================
+        // SHOPEE PER-COMMENT RESULT
+        // =====================================================
+
         const resultList =
           shopeeResponse?.response?.result_list ||
           shopeeResponse?.data?.result_list ||
@@ -386,10 +453,10 @@ export async function POST(req: Request) {
           JSON.stringify(resultList, null, 2)
         );
 
-        /*
-         * If Shopee returned no result list,
-         * DO NOT mark everything successful.
-         */
+        // =====================================================
+        // NO RESULT LIST = DO NOT ASSUME SUCCESS
+        // =====================================================
+
         if (
           !Array.isArray(resultList) ||
           resultList.length === 0
@@ -412,9 +479,10 @@ export async function POST(req: Request) {
           continue;
         }
 
-        /*
-         * MATCH EACH REVIEW BY COMMENT ID
-         */
+        // =====================================================
+        // MATCH EACH REVIEW BY SHOPEE COMMENT ID
+        // =====================================================
+
         for (const r of shopReviews) {
           const reviewId = String(r.reviewId);
 
@@ -423,9 +491,10 @@ export async function POST(req: Request) {
               String(item.comment_id) === reviewId
           );
 
-          /*
-           * No matching Shopee result
-           */
+          // ===================================================
+          // NO MATCH
+          // ===================================================
+
           if (!result) {
             console.error(
               `[Shopee Reply] No result returned for review ${reviewId}`
@@ -443,41 +512,104 @@ export async function POST(req: Request) {
             continue;
           }
 
-          /*
-           * Shopee explicitly reported failure
-           */
+          // ===================================================
+          // SHOPEE EXPLICIT FAILURE
+          // ===================================================
+
           if (result.fail_error) {
+            const failError = String(
+              result.fail_error
+            );
+
+            const failMessage = String(
+              result.fail_message ||
+                result.message ||
+                'No failure message returned by Shopee'
+            );
+
+            // =================================================
+            // DUPLICATE REQUEST
+            //
+            // Shopee says the review was already replied to.
+            // Treat this as ALREADY REPLIED instead of failure.
+            // =================================================
+
+            if (
+              failError ===
+              'product.duplicate_request'
+            ) {
+              console.log(
+                `[Shopee Reply ALREADY REPLIED] review=${reviewId}`
+              );
+
+              await prisma.review.update({
+                where: {
+                  id: r.id,
+                },
+
+                data: {
+                  status: 'REPLIED',
+
+                  repliedAt:
+                    r.repliedAt || new Date(),
+
+                  finalReply:
+                    r.finalReply ||
+                    r.aiReply ||
+                    '',
+                },
+              });
+
+              results.push({
+                id: r.id,
+                reviewId: r.reviewId,
+                success: true,
+                alreadyReplied: true,
+                error: null,
+                message: failMessage,
+              });
+
+              continue;
+            }
+
+            // =================================================
+            // REAL SHOPEE FAILURE
+            // =================================================
+
             console.error(
               `[Shopee Reply FAILED] review=${reviewId}`,
-              JSON.stringify(result, null, 2)
+              JSON.stringify(
+                result,
+                null,
+                2
+              )
             );
 
             results.push({
               id: r.id,
               reviewId: r.reviewId,
               success: false,
+
               error: {
-                failError:
-                  result.fail_error ||
-                  'UNKNOWN_SHOPEE_ERROR',
-                failMessage:
-                  result.fail_message ||
-                  result.message ||
-                  'No failure message returned by Shopee',
+                failError,
+                failMessage,
               },
+
               shopeeResponse: result,
             });
 
             continue;
           }
 
-          /*
-           * SUCCESS
-           */
+          // ===================================================
+          // SUCCESS
+          // ===================================================
+
           await prisma.review.update({
             where: {
               id: r.id,
             },
+
             data: {
               status: 'REPLIED',
               repliedAt: new Date(),
@@ -497,6 +629,10 @@ export async function POST(req: Request) {
           );
         }
       } catch (err: any) {
+        // =====================================================
+        // SHOP-LEVEL ERROR
+        // =====================================================
+
         console.error(
           `[Shopee Bulk Reply ERROR] shop=${shopId}`,
           err
@@ -507,15 +643,18 @@ export async function POST(req: Request) {
             id: r.id,
             reviewId: r.reviewId,
             success: false,
-            error: err?.message || String(err),
+            error:
+              err?.message ||
+              String(err),
           });
         }
       }
     }
 
-    /*
-     * SKIPPED REVIEWS
-     */
+    // =========================================================
+    // SKIPPED REVIEWS
+    // =========================================================
+
     for (const s of skipped) {
       results.push({
         id: s.split(':')[0],
@@ -524,12 +663,20 @@ export async function POST(req: Request) {
       });
     }
 
+    // =========================================================
+    // SUMMARY
+    // =========================================================
+
     const succeeded = results.filter(
       (r) => r.success
     ).length;
 
     const failed =
       results.length - succeeded;
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
 
     return NextResponse.json({
       success: true,
@@ -547,7 +694,9 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         success: false,
-        error: error?.message || String(error),
+        error:
+          error?.message ||
+          String(error),
       },
       {
         status: 500,

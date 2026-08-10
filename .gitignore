@@ -7,3 +7,4 @@
 .env*.local
 
 /src/generated/prisma
+.env*
