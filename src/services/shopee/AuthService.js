@@ -244,15 +244,20 @@ partner_id:partnerId
 const data =
 await response.json();
 
-
+console.log("SHOPEE TOKEN RESPONSE:", {
+  error: data.error,
+  message: data.message,
+  shop_id_list: data.shop_id_list,
+  expire_in: data.expire_in,
+  has_access_token: !!data.access_token,
+  has_refresh_token: !!data.refresh_token,
+});
 
 if(data.error){
-
-throw new Error(
-data.message ||
-data.error
-);
-
+  throw new Error(
+    data.message ||
+    data.error
+  );
 }
 
 
