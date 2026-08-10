@@ -125,18 +125,13 @@ async function processShop(
       pageNo: null,
       nextPageNo: null,
       pagesProcessed: 0,
+      reviewSyncDone: false,
     };
   }
 
   /*
-   * IMPORTANT:
-   *
-   * If pageNo was explicitly supplied in the URL,
-   * use it.
-   *
-   * Otherwise use the page saved for this shop.
-   *
-   * This means every shop remembers its own pagination.
+   * If pageNo is explicitly supplied, use it.
+   * Otherwise use the saved page for this shop.
    */
   let pageNo =
     Number.isInteger(requestedPageNo) &&
@@ -448,11 +443,10 @@ async function processShop(
           !apiHasMore
         ) {
           /*
-           * This shop has reached the end.
+           * This shop reached the end.
            *
-           * Reset to page 1 so the next complete
-           * sync cycle can start from the newest
-           * reviews again.
+           * Mark it complete and reset its page
+           * for the next complete sync cycle.
            */
           hasMore = false;
 
@@ -467,17 +461,13 @@ async function processShop(
           });
 
           console.log(
-            `[Shopee Sync COMPLETE] shop=${shopId} reached end of reviews. Resetting to page 1.`
+            `[Shopee Sync COMPLETE] shop=${shopId} reached end.`
           );
         } else {
           /*
-           * More reviews exist.
+           * More pages exist.
            *
-           * Save the next page BEFORE moving forward.
-           *
-           * Example:
-           * page 1-5 processed
-           * nextReviewPage = 6
+           * Save the next page immediately.
            */
           pageNo = currentPage + 1;
 
@@ -497,8 +487,7 @@ async function processShop(
         }
       } else {
         /*
-         * No comments returned.
-         * Treat this as the end of pagination.
+         * No comments means pagination is complete.
          */
         hasMore = false;
 
@@ -518,7 +507,7 @@ async function processShop(
       }
     } catch (err: any) {
       console.error(
-        `Error fetching reviews for shop ${shopId} page ${currentPage}:`,
+        `[Shopee Sync ERROR] shop=${shopId} page=${currentPage}:`,
         err
       );
 
@@ -532,13 +521,15 @@ async function processShop(
       shopHasError = true;
 
       /*
-       * Do NOT advance the saved page after an error.
-       *
-       * The same page will be retried on the next sync.
+       * Do NOT advance the page after an error.
        */
       break;
     }
   }
+
+  // ==========================================
+  // READ SAVED STATE
+  // ==========================================
 
   const savedAccount =
     await prisma.shopeeAccount.findUnique({
@@ -552,7 +543,9 @@ async function processShop(
     });
 
   const savedNextPage =
-    savedAccount?.nextReviewPage || 1;
+    Number(
+      savedAccount?.nextReviewPage || 1
+    );
 
   const reviewSyncDone =
     Boolean(
@@ -567,19 +560,25 @@ async function processShop(
     shopId,
     brand: assignedBrand,
     synced: syncedCount,
+
     error: shopHasError
       ? failedReasons.join('; ')
       : null,
+
     hasMore: finalHasMore,
+
     pageNo:
       savedNextPage > 1
         ? savedNextPage - 1
         : null,
+
     nextPageNo:
       finalHasMore
         ? savedNextPage
         : null,
+
     pagesProcessed,
+
     reviewSyncDone,
   };
 }
@@ -636,8 +635,8 @@ export async function POST(
     /*
      * Optional manual page override.
      *
-     * Normally DON'T provide this.
-     * The database will remember the correct page.
+     * Normally don't provide this.
+     * The database remembers the page.
      */
     const pageNoParam =
       searchParams.get('pageNo');
@@ -684,14 +683,13 @@ export async function POST(
     // SELECT TARGET SHOPS
     // ==========================================
 
-    let targetAccounts =
-      shopIdParam
-        ? accounts.filter(
-            (account) =>
-              String(account.shopId) ===
-              String(shopIdParam)
-          )
-        : accounts;
+    let targetAccounts = shopIdParam
+      ? accounts.filter(
+          (account) =>
+            String(account.shopId) ===
+            String(shopIdParam)
+        )
+      : accounts;
 
     if (
       shopIdParam &&
@@ -710,31 +708,74 @@ export async function POST(
     }
 
     // ==========================================
-    // ALL-SHOP SAFETY LIMIT
+    // ALL-SHOP ROTATION
+    // ==========================================
+    //
+    // For a manual shopId request:
+    //   Process that exact shop.
+    //
+    // For an all-shop request:
+    //   1. Incomplete shops first
+    //   2. Lowest nextReviewPage first
+    //   3. Oldest account first
+    //
+    // This means shops that have not started yet
+    // naturally get priority over shops already
+    // being synced.
+    //
+    // Maximum 2 shops per request keeps the
+    // operation safely below Vercel timeout.
     // ==========================================
 
     const totalAuthorizedShops =
       targetAccounts.length;
 
     if (!shopIdParam) {
-      /*
-       * Process only 2 shops per request.
-       *
-       * The database stores each shop's next page,
-       * so the next request can continue safely.
-       */
-      targetAccounts =
-        targetAccounts.slice(
+      targetAccounts = [...targetAccounts]
+        .sort((a, b) => {
+          // Incomplete shops first
+          const doneA =
+            a.reviewSyncDone ? 1 : 0;
+
+          const doneB =
+            b.reviewSyncDone ? 1 : 0;
+
+          if (doneA !== doneB) {
+            return doneA - doneB;
+          }
+
+          // Lower page first
+          const pageA =
+            Number(
+              a.nextReviewPage || 1
+            );
+
+          const pageB =
+            Number(
+              b.nextReviewPage || 1
+            );
+
+          if (pageA !== pageB) {
+            return pageA - pageB;
+          }
+
+          // Stable account order
+          return (
+            new Date(a.createdAt).getTime() -
+            new Date(b.createdAt).getTime()
+          );
+        })
+        .slice(
           0,
           MAX_SHOPS_PER_CALL
         );
     }
 
     console.log(
-      'Target shops:',
+      '[Shopee Sync] Selected shops:',
       targetAccounts.map(
         (account) =>
-          `${account.shopId}:page=${account.nextReviewPage}`
+          `${account.shopId}:page=${account.nextReviewPage}:done=${account.reviewSyncDone}`
       )
     );
 
