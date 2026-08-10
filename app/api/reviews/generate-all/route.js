@@ -13,18 +13,24 @@ export async function POST(req) {
   try {
     const body = await req.json().catch(() => ({}));
     const { ids, limit } = body;
-    const batchLimit = typeof limit === 'number' && limit > 0 ? limit : undefined;
+    const batchLimit =
+      typeof limit === 'number' && limit > 0 ? limit : undefined;
 
     let reviewsToProcess = [];
 
     if (ids && Array.isArray(ids) && ids.length > 0) {
       reviewsToProcess = await db.review.findMany({
-        where: { id: { in: ids }, aiReply: null },
+        where: {
+          id: { in: ids },
+          aiReply: null,
+        },
         take: batchLimit,
       });
     } else {
       reviewsToProcess = await db.review.findMany({
-        where: { aiReply: null },
+        where: {
+          aiReply: null,
+        },
         take: batchLimit,
       });
     }
@@ -45,7 +51,8 @@ export async function POST(req) {
     let failedCount = 0;
     const errors = [];
 
-    // Production-safe sequential processing queue with retry & rate-limit protection
+    // Production-safe sequential processing queue
+    // with retry & rate-limit protection.
     for (const review of reviewsToProcess) {
       let success = false;
       let lastError = null;
@@ -54,7 +61,37 @@ export async function POST(req) {
         try {
           const textContent = review.reviewText || 'Great product!';
           const rating = review.rating || 5;
-          const prompt = `Write a professional customer service reply for a ${rating}-star review: "${textContent}"`;
+          const brandName = review.brand || 'our store';
+
+          const prompt = `
+Write a professional customer service reply to this ecommerce customer review.
+
+Brand: ${brandName}
+Rating: ${rating}/5
+Customer Review: "${textContent}"
+
+Rules:
+- Return ONLY the final customer reply.
+- Be warm, natural, concise, and professional.
+- Match the customer's language when appropriate.
+- Respond directly to the customer's actual review.
+- Do not invent facts, policies, warranties, refunds, replacements, discounts, compensation, or other promises.
+- Do not mention AI, prompts, instructions, models, or internal systems.
+- NEVER use placeholders.
+- NEVER write "[Company Name]".
+- NEVER write "[Your Company Name]".
+- NEVER write "[Customer Service Team]".
+- NEVER write "[Your Customer Service Team]".
+- NEVER write "[Customer Service]".
+- NEVER write "[Brand Name]".
+- NEVER write "[Store Name]".
+- NEVER write "[Your Store Name]".
+- NEVER leave square-bracket template variables unresolved.
+- If a sign-off is appropriate, use "Best regards," followed by "Customer Service Team".
+- Do not include notes or explanations outside the customer reply.
+
+Write the final customer reply now.
+`;
 
           const aiReplyText = await askGroq(prompt);
 
@@ -62,7 +99,30 @@ export async function POST(req) {
             throw new Error('Received empty response from AI service.');
           }
 
-          // Update database record with generated AI reply
+          // Final safety check before saving the generated reply.
+          const placeholderPatterns = [
+            /\[Company Name\]/i,
+            /\[Your Company Name\]/i,
+            /\[Customer Service Team\]/i,
+            /\[Your Customer Service Team\]/i,
+            /\[Customer Service\]/i,
+            /\[Brand Name\]/i,
+            /\[Store Name\]/i,
+            /\[Your Store Name\]/i,
+            /\[[^\]]+\]/,
+          ];
+
+          const containsPlaceholder = placeholderPatterns.some((pattern) =>
+            pattern.test(aiReplyText)
+          );
+
+          if (containsPlaceholder) {
+            throw new Error(
+              'AI generated a reply containing an unresolved placeholder.'
+            );
+          }
+
+          // Update database record with generated AI reply.
           await db.review.update({
             where: { id: review.id },
             data: {
@@ -71,13 +131,15 @@ export async function POST(req) {
           });
 
           success = true;
-          break; // Exit retry loop on success
+          break;
         } catch (err) {
           lastError = err.message;
-          console.warn(`[Bulk AI] Review ID ${review.id} attempt ${attempt} failed: ${err.message}`);
+
+          console.warn(
+            `[Bulk AI] Review ID ${review.id} attempt ${attempt} failed: ${err.message}`
+          );
 
           if (attempt <= MAX_RETRIES) {
-            // Exponential backoff before retrying
             await delay(RETRY_BASE_DELAY_MS * attempt);
           }
         }
@@ -87,10 +149,13 @@ export async function POST(req) {
         generatedCount++;
       } else {
         failedCount++;
-        errors.push({ id: review.id, error: lastError });
+        errors.push({
+          id: review.id,
+          error: lastError,
+        });
       }
 
-      // Rest between requests to protect against hitting Groq RPM limits
+      // Rest between requests to protect against Groq RPM limits.
       await delay(REQUEST_DELAY_MS);
     }
 
@@ -98,18 +163,20 @@ export async function POST(req) {
       success: true,
       generated: generatedCount,
       failed: failedCount,
-      total: total,
+      total,
       errors: errors.length > 0 ? errors : undefined,
     });
-
   } catch (error) {
     console.error('[Generate-All Top-Level Error]:', error);
+
     return NextResponse.json(
-      { 
-        success: false, 
+      {
+        success: false,
         error: error.message || 'Internal server error',
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
