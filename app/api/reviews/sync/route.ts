@@ -100,7 +100,7 @@ async function processShop(
   account: any,
   partnerId: string,
   partnerKey: string,
-  requestedPageNo: number
+  requestedPageNo?: number
 ) {
   const shopId = Number(account.shopId);
 
@@ -122,24 +122,46 @@ async function processShop(
       synced: 0,
       error: 'No access token available',
       hasMore: false,
-      pageNo: requestedPageNo,
+      pageNo: null,
       nextPageNo: null,
+      pagesProcessed: 0,
     };
   }
 
+  /*
+   * IMPORTANT:
+   *
+   * If pageNo was explicitly supplied in the URL,
+   * use it.
+   *
+   * Otherwise use the page saved for this shop.
+   *
+   * This means every shop remembers its own pagination.
+   */
   let pageNo =
-    Number.isInteger(requestedPageNo) && requestedPageNo > 0
-      ? requestedPageNo
-      : 1;
+    Number.isInteger(requestedPageNo) &&
+    Number(requestedPageNo) > 0
+      ? Number(requestedPageNo)
+      : Number(account.nextReviewPage || 1);
+
+  if (pageNo < 1) {
+    pageNo = 1;
+  }
 
   let hasMore = true;
   let pagesProcessed = 0;
+
+  console.log(
+    `[Shopee Sync] shop=${shopId} starting page=${pageNo}`
+  );
 
   while (
     hasMore &&
     pagesProcessed < MAX_PAGES_PER_CALL
   ) {
     pagesProcessed++;
+
+    const currentPage = pageNo;
 
     const timestamp = Math.floor(Date.now() / 1000);
 
@@ -162,7 +184,7 @@ async function processShop(
       `&shop_id=${shopId}` +
       `&sign=${sign}` +
       `&page_size=${PAGE_SIZE}` +
-      `&page_no=${pageNo}`;
+      `&page_no=${currentPage}`;
 
     try {
       let res = await fetch(url, {
@@ -176,8 +198,7 @@ async function processShop(
 
       const errorText =
         `${shopeeResponse?.error || ''} ` +
-        `${shopeeResponse?.message || ''}`
-          .toLowerCase();
+        `${shopeeResponse?.message || ''}`.toLowerCase();
 
       // ==========================================
       // TOKEN REFRESH
@@ -198,18 +219,15 @@ async function processShop(
             );
 
           if (refreshed) {
-            accessToken =
-              refreshed.accessToken;
+            accessToken = refreshed.accessToken;
 
             await prisma.shopeeAccount.updateMany({
               where: {
                 shopId: BigInt(shopId),
               },
               data: {
-                accessToken:
-                  refreshed.accessToken,
-                refreshToken:
-                  refreshed.refreshToken,
+                accessToken: refreshed.accessToken,
+                refreshToken: refreshed.refreshToken,
               },
             });
 
@@ -219,11 +237,10 @@ async function processShop(
             const newBaseString =
               `${partnerId}${path}${newTimestamp}${accessToken}${shopId}`;
 
-            const newSign =
-              crypto
-                .createHmac('sha256', partnerKey)
-                .update(newBaseString)
-                .digest('hex');
+            const newSign = crypto
+              .createHmac('sha256', partnerKey)
+              .update(newBaseString)
+              .digest('hex');
 
             const newUrl =
               `https://partner.shopeemobile.com${path}` +
@@ -233,16 +250,14 @@ async function processShop(
               `&shop_id=${shopId}` +
               `&sign=${newSign}` +
               `&page_size=${PAGE_SIZE}` +
-              `&page_no=${pageNo}`;
+              `&page_no=${currentPage}`;
 
-            const retryRes =
-              await fetch(newUrl, {
-                method: 'GET',
-                headers: {
-                  'Content-Type':
-                    'application/json',
-                },
-              });
+            const retryRes = await fetch(newUrl, {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+            });
 
             shopeeResponse =
               await retryRes.json();
@@ -270,7 +285,7 @@ async function processShop(
 
       if (shopeeResponse?.error) {
         failedReasons.push(
-          `Page ${pageNo}: ${shopeeResponse.error} - ${
+          `Page ${currentPage}: ${shopeeResponse.error} - ${
             shopeeResponse.message || ''
           }`
         );
@@ -298,14 +313,12 @@ async function processShop(
           idx < commentList.length;
           idx++
         ) {
-          const item =
-            commentList[idx];
+          const item = commentList[idx];
 
-          const reviewIdStr =
-            String(
-              item.comment_id ||
-                `${shopId}-${pageNo}-${idx}`
-            );
+          const reviewIdStr = String(
+            item.comment_id ||
+              `${shopId}-${currentPage}-${idx}`
+          );
 
           const resolvedProductName =
             cleanText(
@@ -360,11 +373,9 @@ async function processShop(
             },
 
             update: {
-              shopId:
-                BigInt(shopId),
+              shopId: BigInt(shopId),
 
-              marketplace:
-                'SHOPEE',
+              marketplace: 'SHOPEE',
 
               reviewText:
                 resolvedReviewText,
@@ -389,14 +400,11 @@ async function processShop(
             },
 
             create: {
-              reviewId:
-                reviewIdStr,
+              reviewId: reviewIdStr,
 
-              marketplace:
-                'SHOPEE',
+              marketplace: 'SHOPEE',
 
-              shopId:
-                BigInt(shopId),
+              shopId: BigInt(shopId),
 
               productName:
                 resolvedProductName,
@@ -413,8 +421,7 @@ async function processShop(
               reviewText:
                 resolvedReviewText,
 
-              status:
-                'PENDING',
+              status: 'PENDING',
 
               brand:
                 assignedBrand,
@@ -440,35 +447,121 @@ async function processShop(
           commentList.length < PAGE_SIZE ||
           !apiHasMore
         ) {
+          /*
+           * This shop has reached the end.
+           *
+           * Reset to page 1 so the next complete
+           * sync cycle can start from the newest
+           * reviews again.
+           */
           hasMore = false;
+
+          await prisma.shopeeAccount.update({
+            where: {
+              shopId: BigInt(shopId),
+            },
+            data: {
+              nextReviewPage: 1,
+              reviewSyncDone: true,
+            },
+          });
+
+          console.log(
+            `[Shopee Sync COMPLETE] shop=${shopId} reached end of reviews. Resetting to page 1.`
+          );
         } else {
-          pageNo++;
+          /*
+           * More reviews exist.
+           *
+           * Save the next page BEFORE moving forward.
+           *
+           * Example:
+           * page 1-5 processed
+           * nextReviewPage = 6
+           */
+          pageNo = currentPage + 1;
+
+          await prisma.shopeeAccount.update({
+            where: {
+              shopId: BigInt(shopId),
+            },
+            data: {
+              nextReviewPage: pageNo,
+              reviewSyncDone: false,
+            },
+          });
+
+          console.log(
+            `[Shopee Sync PROGRESS] shop=${shopId} saved next page=${pageNo}`
+          );
         }
       } else {
+        /*
+         * No comments returned.
+         * Treat this as the end of pagination.
+         */
         hasMore = false;
+
+        await prisma.shopeeAccount.update({
+          where: {
+            shopId: BigInt(shopId),
+          },
+          data: {
+            nextReviewPage: 1,
+            reviewSyncDone: true,
+          },
+        });
+
+        console.log(
+          `[Shopee Sync COMPLETE] shop=${shopId} returned no more reviews.`
+        );
       }
     } catch (err: any) {
       console.error(
-        `Error fetching reviews for shop ${shopId} page ${pageNo}:`,
+        `Error fetching reviews for shop ${shopId} page ${currentPage}:`,
         err
       );
 
       failedReasons.push(
-        `Page ${pageNo}: ${
+        `Page ${currentPage}: ${
           err?.message ||
           'Unknown network error'
         }`
       );
 
       shopHasError = true;
+
+      /*
+       * Do NOT advance the saved page after an error.
+       *
+       * The same page will be retried on the next sync.
+       */
       break;
     }
   }
 
-  const nextPageNo =
-    hasMore && !shopHasError
-      ? pageNo
-      : null;
+  const savedAccount =
+    await prisma.shopeeAccount.findUnique({
+      where: {
+        shopId: BigInt(shopId),
+      },
+      select: {
+        nextReviewPage: true,
+        reviewSyncDone: true,
+      },
+    });
+
+  const savedNextPage =
+    savedAccount?.nextReviewPage || 1;
+
+  const reviewSyncDone =
+    Boolean(
+      savedAccount?.reviewSyncDone
+    );
+
+  const finalHasMore =
+    !shopHasError &&
+    !reviewSyncDone;
 
   return {
     shopId,
@@ -477,13 +570,17 @@ async function processShop(
     error: shopHasError
       ? failedReasons.join('; ')
       : null,
-    hasMore,
+    hasMore: finalHasMore,
     pageNo:
-      hasMore
-        ? pageNo
+      savedNextPage > 1
+        ? savedNextPage - 1
         : null,
-    nextPageNo,
+    nextPageNo:
+      finalHasMore
+        ? savedNextPage
+        : null,
     pagesProcessed,
+    reviewSyncDone,
   };
 }
 
@@ -536,6 +633,12 @@ export async function POST(
     const shopIdParam =
       searchParams.get('shopId');
 
+    /*
+     * Optional manual page override.
+     *
+     * Normally DON'T provide this.
+     * The database will remember the correct page.
+     */
     const pageNoParam =
       searchParams.get('pageNo');
 
@@ -543,14 +646,18 @@ export async function POST(
       pageNoParam &&
       Number(pageNoParam) > 0
         ? Number(pageNoParam)
-        : 1;
+        : undefined;
 
     // ==========================================
     // LOAD ACCOUNTS
     // ==========================================
 
     const accounts =
-      await prisma.shopeeAccount.findMany();
+      await prisma.shopeeAccount.findMany({
+        orderBy: {
+          createdAt: 'asc',
+        },
+      });
 
     console.log(
       'Accounts found:',
@@ -603,17 +710,19 @@ export async function POST(
     }
 
     // ==========================================
-    // SAFETY LIMIT FOR ALL-SHOP REQUESTS
-    //
-    // A single-shop request can process one shop.
-    // An all-shop request processes only 2 shops.
-    // This prevents Vercel 60-second timeouts.
+    // ALL-SHOP SAFETY LIMIT
     // ==========================================
 
     const totalAuthorizedShops =
       targetAccounts.length;
 
     if (!shopIdParam) {
+      /*
+       * Process only 2 shops per request.
+       *
+       * The database stores each shop's next page,
+       * so the next request can continue safely.
+       */
       targetAccounts =
         targetAccounts.slice(
           0,
@@ -625,7 +734,7 @@ export async function POST(
       'Target shops:',
       targetAccounts.map(
         (account) =>
-          String(account.shopId)
+          `${account.shopId}:page=${account.nextReviewPage}`
       )
     );
 
@@ -641,8 +750,10 @@ export async function POST(
       console.log(
         'Processing shop:',
         account.shopId,
-        'page:',
-        requestedPageNo
+        'savedPage:',
+        account.nextReviewPage,
+        'manualPage:',
+        requestedPageNo || 'none'
       );
 
       const result =
@@ -691,6 +802,12 @@ export async function POST(
           result.hasMore
       );
 
+    const completedShops =
+      results.filter(
+        (result) =>
+          result.reviewSyncDone
+      ).length;
+
     // ==========================================
     // RESPONSE
     // ==========================================
@@ -716,10 +833,12 @@ export async function POST(
 
       failedShops,
 
+      completedShops,
+
       hasMore,
 
-      pageNo:
-        requestedPageNo,
+      manualPageNo:
+        requestedPageNo || null,
 
       shopResults:
         results,

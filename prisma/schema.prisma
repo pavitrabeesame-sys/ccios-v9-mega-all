@@ -30,15 +30,18 @@ model User {
 }
 
 model ShopeeAccount {
-  id           String   @id @default(uuid())
-  shopId       BigInt   @unique
-  accessToken  String
-  refreshToken String
-  expireIn     Int
-  updatedAt    DateTime @updatedAt
-  createdAt    DateTime @default(now())
-  brandId      String?
-  Brand        Brand?   @relation(fields: [brandId], references: [id])
+  id              String   @id @default(uuid())
+  shopId          BigInt   @unique
+  accessToken     String
+  refreshToken    String
+  expireIn        Int
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+  brandId         String?
+  nextReviewPage  Int      @default(1)
+  reviewSyncDone  Boolean  @default(false)
+
+  Brand           Brand?   @relation(fields: [brandId], references: [id])
 }
 
 model LazadaAccount {
