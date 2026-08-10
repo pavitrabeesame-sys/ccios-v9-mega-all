@@ -255,6 +255,27 @@ export default function ReviewsPage() {
     });
 
   // =========================================================
+  // SELECTED PENDING REVIEWS
+  // =========================================================
+
+  const selectedPendingIds =
+    filteredReviews
+      .filter(
+        (review) =>
+          selectedIds.includes(
+            review.id
+          ) &&
+          !review.aiReply
+      )
+      .map(
+        (review) =>
+          review.id
+      );
+
+  const selectedPendingCount =
+    selectedPendingIds.length;
+
+  // =========================================================
   // SELECT ALL
   // =========================================================
 
@@ -295,6 +316,162 @@ export default function ReviewsPage() {
   };
 
   // =========================================================
+  // AI GENERATION HELPER
+  // =========================================================
+
+  const generateReviewBatches = async (
+    ids: string[],
+    mode: 'all' | 'selected'
+  ) => {
+    if (ids.length === 0) {
+      return;
+    }
+
+    let totalGenerated = 0;
+    let totalFailed = 0;
+    let remaining = [...ids];
+
+    while (
+      remaining.length > 0
+    ) {
+      const batch =
+        remaining.slice(
+          0,
+          BATCH_SIZE
+        );
+
+      const processedBefore =
+        totalGenerated +
+        totalFailed;
+
+      const processedAfter =
+        processedBefore +
+        batch.length;
+
+      setGenerateProgress(
+        mode === 'selected'
+          ? `Generating selected ${processedBefore + 1}-${processedAfter} of ${ids.length}...`
+          : `Generating ${processedBefore + 1}-${processedAfter} of ${ids.length}...`
+      );
+
+      console.log(
+        `[Generate ${mode}] Sending batch:`,
+        batch
+      );
+
+      const res =
+        await fetch(
+          '/api/reviews/generate-all',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
+            body: JSON.stringify({
+              ids: batch,
+              limit: BATCH_SIZE,
+            }),
+          }
+        );
+
+      let data: any = {};
+
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+
+      console.log(
+        `[Generate ${mode}] Response:`,
+        data
+      );
+
+      // =====================================================
+      // RATE LIMIT / API FAILURE
+      // =====================================================
+
+      const rateLimited =
+        res.status === 429 ||
+        data.rateLimited === true ||
+        data.code ===
+          'rate_limit_exceeded' ||
+        String(
+          data.error || ''
+        )
+          .toLowerCase()
+          .includes(
+            'rate limit'
+          ) ||
+        String(
+          data.message || ''
+        )
+          .toLowerCase()
+          .includes(
+            'rate limit'
+          );
+
+      if (rateLimited) {
+        totalFailed +=
+          batch.length;
+
+        alert(
+          data.message ||
+            'AI generation stopped because the AI provider rate limit was reached. Please wait before trying again.'
+        );
+
+        break;
+      }
+
+      // =====================================================
+      // OTHER API FAILURE
+      // =====================================================
+
+      if (
+        !res.ok ||
+        !data.success
+      ) {
+        totalFailed +=
+          batch.length;
+
+        console.error(
+          `[Generate ${mode}] Batch failed:`,
+          data
+        );
+
+        break;
+      }
+
+      // =====================================================
+      // SUCCESS
+      // =====================================================
+
+      totalGenerated +=
+        Number(
+          data.generated || 0
+        );
+
+      totalFailed +=
+        Number(
+          data.failed || 0
+        );
+
+      remaining =
+        remaining.slice(
+          batch.length
+        );
+
+      await loadReviews();
+    }
+
+    return {
+      totalGenerated,
+      totalFailed,
+    };
+  };
+
+  // =========================================================
   // GENERATE ALL AI REPLIES
   // =========================================================
 
@@ -303,199 +480,40 @@ export default function ReviewsPage() {
       const pendingIds =
         filteredReviews
           .filter(
-            (r) => !r.aiReply
+            (review) =>
+              !review.aiReply
           )
           .map(
-            (r) => r.id
+            (review) =>
+              review.id
           );
+
+      if (
+        pendingIds.length === 0
+      ) {
+        alert(
+          'No reviews without AI replies in the current filter.'
+        );
+        return;
+      }
 
       setGenerating(true);
 
       try {
-        // =====================================================
-        // FALLBACK
-        //
-        // If the current UI filter contains no visible review
-        // without an AI reply, let the backend decide whether
-        // there are still reviews that need generation.
-        // =====================================================
-
-        if (
-          pendingIds.length === 0
-        ) {
-          setGenerateProgress(
-            'Generating AI reply...'
+        const result =
+          await generateReviewBatches(
+            pendingIds,
+            'all'
           );
 
-          const res =
-            await fetch(
-              '/api/reviews/generate-all',
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type':
-                    'application/json',
-                },
-                body: JSON.stringify(
-                  {
-                    limit:
-                      BATCH_SIZE,
-                  }
-                ),
-              }
-            );
-
-          const data =
-            await res.json();
-
-          console.log(
-            '[Generate All Fallback]',
-            data
-          );
-
-          if (
-            !res.ok ||
-            !data.success
-          ) {
-            throw new Error(
-              data.error ||
-                data.message ||
-                'AI generation request failed'
-            );
-          }
-
-          const generated =
-            Number(
-              data.generated || 0
-            );
-
-          const failed =
-            Number(
-              data.failed || 0
-            );
-
-          await loadReviews();
-
-          if (
-            generated > 0
-          ) {
-            alert(
-              `Generated ${generated} AI replies${
-                failed > 0
-                  ? `, ${failed} failed`
-                  : ''
-              }.`
-            );
-          } else {
-            alert(
-              data.message ||
-                'No reviews require AI generation or regeneration.'
-            );
-          }
-
+        if (!result) {
           return;
         }
 
-        // =====================================================
-        // NORMAL BATCH GENERATION
-        // =====================================================
-
-        let totalGenerated = 0;
-
-        let totalFailed = 0;
-
-        let remaining = [
-          ...pendingIds,
-        ];
-
-        while (
-          remaining.length > 0
-        ) {
-          const batch =
-            remaining.slice(
-              0,
-              BATCH_SIZE
-            );
-
-          const processedBefore =
-            totalGenerated +
-            totalFailed;
-
-          const processedAfter =
-            processedBefore +
-            batch.length;
-
-          setGenerateProgress(
-            `Generating ${
-              processedBefore + 1
-            }-${processedAfter} of ${
-              pendingIds.length
-            }...`
-          );
-
-          console.log(
-            '[Generate All] Sending batch:',
-            batch
-          );
-
-          const res =
-            await fetch(
-              '/api/reviews/generate-all',
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type':
-                    'application/json',
-                },
-                body: JSON.stringify(
-                  {
-                    ids: batch,
-                    limit:
-                      BATCH_SIZE,
-                  }
-                ),
-              }
-            );
-
-          const data =
-            await res.json();
-
-          console.log(
-            '[Generate All] Response:',
-            data
-          );
-
-          if (
-            !res.ok ||
-            !data.success
-          ) {
-            totalFailed +=
-              batch.length;
-
-            console.error(
-              '[Generate All] Batch failed:',
-              data
-            );
-          } else {
-            totalGenerated +=
-              Number(
-                data.generated ||
-                  0
-              );
-
-            totalFailed +=
-              Number(
-                data.failed || 0
-              );
-          }
-
-          remaining =
-            remaining.slice(
-              batch.length
-            );
-
-          await loadReviews();
-        }
+        const {
+          totalGenerated,
+          totalFailed,
+        } = result;
 
         setGenerateProgress('');
 
@@ -516,6 +534,84 @@ export default function ReviewsPage() {
           err instanceof Error
             ? err.message
             : 'Failed to generate replies.'
+        );
+      } finally {
+        setGenerating(false);
+        setGenerateProgress('');
+      }
+    };
+
+  // =========================================================
+  // GENERATE SELECTED AI REPLIES
+  // =========================================================
+
+  const handleGenerateSelected =
+    async () => {
+      const idsToGenerate =
+        filteredReviews
+          .filter(
+            (review) =>
+              selectedIds.includes(
+                review.id
+              ) &&
+              !review.aiReply
+          )
+          .map(
+            (review) =>
+              review.id
+          );
+
+      if (
+        idsToGenerate.length === 0
+      ) {
+        alert(
+          'Please select one or more reviews without an AI reply.'
+        );
+        return;
+      }
+
+      setGenerating(true);
+
+      try {
+        console.log(
+          '[Generate Selected] Selected IDs:',
+          idsToGenerate
+        );
+
+        const result =
+          await generateReviewBatches(
+            idsToGenerate,
+            'selected'
+          );
+
+        if (!result) {
+          return;
+        }
+
+        const {
+          totalGenerated,
+          totalFailed,
+        } = result;
+
+        setGenerateProgress('');
+
+        alert(
+          `Generated ${totalGenerated} selected AI replies${
+            totalFailed > 0
+              ? `, ${totalFailed} failed`
+              : ''
+          }.`
+        );
+      } catch (err) {
+        console.error(
+          'Generate selected failed:',
+          err
+        );
+
+        alert(
+          err instanceof Error
+            ? err.message
+            : 'Failed to generate selected replies.'
         );
       } finally {
         setGenerating(false);
@@ -640,6 +736,10 @@ export default function ReviewsPage() {
 
         <div className="flex items-center gap-3">
 
+          {/* =================================================
+              SYNC PROGRESS
+              ================================================= */}
+
           {syncing &&
             syncProgress && (
               <span className="text-xs text-blue-400">
@@ -647,12 +747,20 @@ export default function ReviewsPage() {
               </span>
             )}
 
+          {/* =================================================
+              GENERATE PROGRESS
+              ================================================= */}
+
           {generating &&
             generateProgress && (
               <span className="text-xs text-purple-400">
                 {generateProgress}
               </span>
             )}
+
+          {/* =================================================
+              REPLY SELECTED
+              ================================================= */}
 
           {selectedIds.length >
             0 && (
@@ -693,13 +801,58 @@ export default function ReviewsPage() {
             </button>
           )}
 
+          {/* =================================================
+              GENERATE SELECTED
+              ================================================= */}
+
+          <button
+            onClick={
+              handleGenerateSelected
+            }
+            disabled={
+              generating ||
+              syncing ||
+              posting ||
+              selectedPendingCount ===
+                0
+            }
+            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-4 py-2 rounded-lg flex items-center gap-2 transition-colors font-medium shadow-lg disabled:opacity-50 cursor-pointer"
+          >
+            <svg
+              className={`w-4 h-4 ${
+                generating
+                  ? 'animate-spin'
+                  : ''
+              }`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M13 10V3L4 14h7v7l9-11h-7z"
+              />
+            </svg>
+
+            {generating
+              ? 'Generating...'
+              : `Generate Selected (${selectedPendingCount})`}
+          </button>
+
+          {/* =================================================
+              GENERATE ALL
+              ================================================= */}
+
           <button
             onClick={
               handleGenerateAll
             }
             disabled={
               generating ||
-              syncing
+              syncing ||
+              posting
             }
             className="bg-purple-600 hover:bg-purple-500 text-white text-xs px-4 py-2 rounded-lg flex items-center gap-2 transition-colors font-medium shadow-lg disabled:opacity-50 cursor-pointer"
           >
@@ -726,13 +879,18 @@ export default function ReviewsPage() {
               : 'Generate All Replies'}
           </button>
 
+          {/* =================================================
+              SHOPEE SYNC
+              ================================================= */}
+
           <button
             onClick={
               handleSync
             }
             disabled={
               syncing ||
-              generating
+              generating ||
+              posting
             }
             className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-lg flex items-center gap-2 transition-colors font-medium shadow-lg disabled:opacity-50 cursor-pointer"
           >
@@ -758,6 +916,10 @@ export default function ReviewsPage() {
               ? 'Syncing Live...'
               : 'Sync Live Reviews (Shopee)'}
           </button>
+
+          {/* =================================================
+              PENDING
+              ================================================= */}
 
           <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
             <span className="text-gray-400">
@@ -786,14 +948,22 @@ export default function ReviewsPage() {
 
         <div className="flex items-center gap-4">
 
+          {/* =================================================
+              SELECT ALL FILTERED
+              ================================================= */}
+
           <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={
                 filteredReviews.length >
                   0 &&
-                selectedIds.length ===
-                  filteredReviews.length
+                filteredReviews.every(
+                  (review) =>
+                    selectedIds.includes(
+                      review.id
+                    )
+                )
               }
               onChange={
                 handleSelectAll
@@ -805,6 +975,10 @@ export default function ReviewsPage() {
               Select All Filtered
             </span>
           </label>
+
+          {/* =================================================
+              BRAND FILTERS
+              ================================================= */}
 
           <div className="flex gap-2">
 
@@ -842,6 +1016,10 @@ export default function ReviewsPage() {
 
           </div>
         </div>
+
+        {/* ===================================================
+            STAR FILTER
+            =================================================== */}
 
         <div className="flex gap-2 items-center">
 
@@ -882,6 +1060,10 @@ export default function ReviewsPage() {
           )}
 
         </div>
+
+        {/* ===================================================
+            MARKETPLACE FILTER
+            =================================================== */}
 
         <div className="flex gap-2 bg-gray-800 p-1 rounded-full border border-gray-700">
 
@@ -964,6 +1146,10 @@ export default function ReviewsPage() {
                         : 'bg-gray-900 border-gray-800 hover:border-gray-700'
                     }`}
                   >
+
+                    {/* =================================================
+                        REVIEW CHECKBOX
+                        ================================================= */}
 
                     <input
                       type="checkbox"
@@ -1124,6 +1310,10 @@ export default function ReviewsPage() {
             )}
 
           </div>
+
+          {/* =====================================================
+              SINGLE REVIEW REPLY
+              ===================================================== */}
 
           {selectedReview && (
             <div className="space-y-3 mt-4">
