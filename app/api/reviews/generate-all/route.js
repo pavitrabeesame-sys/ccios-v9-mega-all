@@ -13,6 +13,7 @@ export async function POST(req) {
   try {
     const body = await req.json().catch(() => ({}));
     const { ids, limit } = body;
+
     const batchLimit =
       typeof limit === 'number' && limit > 0 ? limit : undefined;
 
@@ -59,47 +60,131 @@ export async function POST(req) {
 
       for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
         try {
-          const textContent = review.reviewText || 'Great product!';
+          const textContent = review.reviewText?.trim() || '';
           const rating = review.rating || 5;
           const brandName = review.brand || 'our store';
 
+          /*
+           * IMPORTANT:
+           * The AI must respond to the actual customer review.
+           * Do not replace an empty review with invented review content.
+           */
           const prompt = `
-Write a professional customer service reply to this ecommerce customer review.
+You are writing an official customer-service reply for ${brandName}.
 
-Brand: ${brandName}
+CUSTOMER REVIEW
 Rating: ${rating}/5
-Customer Review: "${textContent}"
+Review:
+"${textContent || '[No written review provided]'}"
 
-Rules:
-- Return ONLY the final customer reply.
-- Be warm, natural, concise, and professional.
-- Match the customer's language when appropriate.
-- Respond directly to the customer's actual review.
-- Do not invent facts, policies, warranties, refunds, replacements, discounts, compensation, or other promises.
-- Do not mention AI, prompts, instructions, models, or internal systems.
-- NEVER use placeholders.
-- NEVER write "[Company Name]".
-- NEVER write "[Your Company Name]".
-- NEVER write "[Customer Service Team]".
-- NEVER write "[Your Customer Service Team]".
-- NEVER write "[Customer Service]".
-- NEVER write "[Brand Name]".
-- NEVER write "[Store Name]".
-- NEVER write "[Your Store Name]".
-- NEVER leave square-bracket template variables unresolved.
-- If a sign-off is appropriate, use "Best regards," followed by "Customer Service Team".
-- Do not include notes or explanations outside the customer reply.
+REVIEW REPLY SOP
+
+1. Read the customer's actual review carefully before writing the reply.
+
+2. Identify the specific thing the customer mentioned.
+
+3. Respond directly to that specific point.
+   Examples:
+   - If they mention leather quality, acknowledge the leather quality.
+   - If they mention comfort, respond to the comfort.
+   - If they mention size or fitting, respond to that.
+   - If they mention delivery, acknowledge the delivery experience.
+   - If they mention design, colour, material, packaging, value, or service, respond to that specific point.
+   - If they mention a problem or complaint, acknowledge the actual problem.
+
+4. Do NOT give the same generic reply to different reviews.
+
+5. Match the customer's language when appropriate.
+
+6. Sound natural, warm, human, and genuine.
+   Do not sound like a corporate template.
+
+7. Keep the reply concise.
+   Normally use 1 short paragraph or 2 short paragraphs.
+
+8. Avoid repetitive corporate filler such as:
+   "Your satisfaction is our priority."
+   "We value your feedback."
+   "Thank you for your kind review."
+   "We look forward to serving you again."
+
+   These phrases should NOT be used unless they genuinely fit the customer's review.
+
+9. For positive reviews:
+   - Thank the customer naturally.
+   - Mention the specific thing they liked whenever possible.
+   - Do not invent additional product details.
+
+10. For negative reviews:
+    - Acknowledge the actual concern.
+    - Be empathetic.
+    - Do not pretend the customer is satisfied.
+    - Do not make promises about refunds, replacements, compensation, warranties, or policies unless those facts are explicitly provided in the review.
+
+11. For a review with no written comment:
+    - Thank the customer for the rating.
+    - Do not invent anything they said or experienced.
+
+12. Never invent:
+    - product specifications
+    - warranties
+    - guarantees
+    - refunds
+    - replacements
+    - discounts
+    - compensation
+    - policies
+    - delivery promises
+    - facts about the customer's order
+    - facts not contained in the review
+
+13. Never mention:
+    - AI
+    - prompts
+    - models
+    - instructions
+    - internal systems
+    - generation
+    - automation
+
+14. NEVER use placeholders.
+
+15. NEVER write:
+    [Company Name]
+    [Your Company Name]
+    [Customer Service Team]
+    [Your Customer Service Team]
+    [Customer Service]
+    [Brand Name]
+    [Store Name]
+    [Your Store Name]
+
+16. NEVER leave any square-bracket template variable unresolved.
+
+17. Do not add notes, explanations, analysis, or labels.
+
+18. Return ONLY the final customer reply.
+
+19. If a sign-off is appropriate, use:
+    Best regards,
+    Customer Service Team
+
+20. The customer's actual words and meaning must determine the response.
 
 Write the final customer reply now.
 `;
 
           const aiReplyText = await askGroq(prompt);
 
-          if (!aiReplyText) {
+          if (!aiReplyText || !aiReplyText.trim()) {
             throw new Error('Received empty response from AI service.');
           }
 
-          // Final safety check before saving the generated reply.
+          const cleanedReply = aiReplyText.trim();
+
+          /*
+           * Final safety check before saving the generated reply.
+           */
           const placeholderPatterns = [
             /\[Company Name\]/i,
             /\[Your Company Name\]/i,
@@ -113,7 +198,7 @@ Write the final customer reply now.
           ];
 
           const containsPlaceholder = placeholderPatterns.some((pattern) =>
-            pattern.test(aiReplyText)
+            pattern.test(cleanedReply)
           );
 
           if (containsPlaceholder) {
@@ -122,21 +207,23 @@ Write the final customer reply now.
             );
           }
 
-          // Update database record with generated AI reply.
+          /*
+           * Update database record with generated AI reply.
+           */
           await db.review.update({
             where: { id: review.id },
             data: {
-              aiReply: aiReplyText,
+              aiReply: cleanedReply,
             },
           });
 
           success = true;
           break;
         } catch (err) {
-          lastError = err.message;
+          lastError = err?.message || String(err);
 
           console.warn(
-            `[Bulk AI] Review ID ${review.id} attempt ${attempt} failed: ${err.message}`
+            `[Bulk AI] Review ID ${review.id} attempt ${attempt} failed: ${lastError}`
           );
 
           if (attempt <= MAX_RETRIES) {
@@ -149,13 +236,16 @@ Write the final customer reply now.
         generatedCount++;
       } else {
         failedCount++;
+
         errors.push({
           id: review.id,
           error: lastError,
         });
       }
 
-      // Rest between requests to protect against Groq RPM limits.
+      /*
+       * Rest between requests to protect against Groq RPM limits.
+       */
       await delay(REQUEST_DELAY_MS);
     }
 
@@ -172,7 +262,7 @@ Write the final customer reply now.
     return NextResponse.json(
       {
         success: false,
-        error: error.message || 'Internal server error',
+        error: error?.message || 'Internal server error',
       },
       {
         status: 500,
