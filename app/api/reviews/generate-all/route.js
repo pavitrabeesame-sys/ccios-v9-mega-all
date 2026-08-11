@@ -432,27 +432,24 @@ export async function POST(
       }
 
       candidates =
-        await db.review.findMany({
-          where: {
-            id: {
-              in: uniqueIds,
-            },
+  await db.review.findMany({
+    where: {
+      id: {
+        in: uniqueIds,
+      },
 
-            status: {
-              not: 'REPLIED',
-            },
+      // Selected reviews can be generated regardless
+      // of whether shopId is populated.
+      // shopId is NOT required for AI generation.
+      status: {
+        not: 'REPLIED',
+      },
+    },
 
-            shopId: {
-              not: null,
-            },
-          },
-
-          // The IDs are already explicitly selected.
-          // Do not reorder them unnecessarily.
-          take:
-            requestedLimit ||
-            uniqueIds.length,
-        });
+    take:
+      requestedLimit ||
+      uniqueIds.length,
+  });
     } else {
       // ------------------------------------------------------
       // GENERATE-ALL MODE
@@ -962,4 +959,4 @@ export async function POST(
       }
     );
   }
-}
+}s
