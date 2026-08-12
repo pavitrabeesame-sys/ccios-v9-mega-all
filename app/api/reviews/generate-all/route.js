@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 // ============================================================
-// CONFIGURATION
+// CONFIG
 // ============================================================
 
 const REQUEST_DELAY_MS = 500;
@@ -20,40 +20,8 @@ const RETRY_BASE_DELAY_MS = 2000;
 const delay = (ms) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-// ============================================================
-// PLACEHOLDER DETECTION
-// ============================================================
-
-const PLACEHOLDER_PATTERNS = [
-  /\[Company Name\]/i,
-  /\[Your Company Name\]/i,
-  /\[Customer Service Team\]/i,
-  /\[Your Customer Service Team\]/i,
-  /\[Customer Service\]/i,
-  /\[Brand Name\]/i,
-  /\[Store Name\]/i,
-  /\[Your Store Name\]/i,
-  /\[[^\]]+\]/,
-];
-
-function hasPlaceholder(text) {
-  if (!text) {
-    return false;
-  }
-
-  return PLACEHOLDER_PATTERNS.some((pattern) =>
-    pattern.test(text)
-  );
-}
-
-// ============================================================
-// ERROR HELPERS
-// ============================================================
-
 function getErrorMessage(error) {
-  if (!error) {
-    return 'Unknown error';
-  }
+  if (!error) return 'Unknown error';
 
   if (typeof error === 'string') {
     return error;
@@ -74,6 +42,34 @@ function getErrorText(error) {
   return getErrorMessage(error).toLowerCase();
 }
 
+// ============================================================
+// PLACEHOLDER PROTECTION
+// ============================================================
+
+const PLACEHOLDER_PATTERNS = [
+  /\[Company Name\]/i,
+  /\[Your Company Name\]/i,
+  /\[Customer Service Team\]/i,
+  /\[Your Customer Service Team\]/i,
+  /\[Customer Service\]/i,
+  /\[Brand Name\]/i,
+  /\[Store Name\]/i,
+  /\[Your Store Name\]/i,
+  /\[[^\]]+\]/,
+];
+
+function hasPlaceholder(text) {
+  if (!text) return false;
+
+  return PLACEHOLDER_PATTERNS.some((pattern) =>
+    pattern.test(text)
+  );
+}
+
+// ============================================================
+// ERROR TYPES
+// ============================================================
+
 function isRateLimitError(error) {
   const text = getErrorText(error);
 
@@ -85,7 +81,8 @@ function isRateLimitError(error) {
     text.includes('daily token') ||
     text.includes('tpd') ||
     text.includes('429') ||
-    text.includes('quota')
+    text.includes('quota') ||
+    text.includes('resource_exhausted')
   );
 }
 
@@ -112,20 +109,15 @@ function isRetryableError(error) {
 // ============================================================
 
 function isRegenerationCandidate(review) {
-  if (!review) {
-    return false;
-  }
+  if (!review) return false;
 
-  // NEVER regenerate a review that has already
-  // been posted/replied to.
+  // Never regenerate already replied reviews
   if (review.status === 'REPLIED') {
     return false;
   }
 
-  // Generate when:
-  // 1. No AI reply exists
-  // OR
-  // 2. Existing AI reply contains a placeholder
+  // Generate if no reply exists
+  // OR existing reply contains a placeholder
   return (
     !review.aiReply ||
     hasPlaceholder(review.aiReply)
@@ -133,39 +125,51 @@ function isRegenerationCandidate(review) {
 }
 
 // ============================================================
-// PROMPT BUILDER
+// BRAND + PROMPT
 // ============================================================
 
 function buildPrompt(review) {
-  const reviewText = (review.reviewText || '').trim();
-  const rating = Number(review.rating) || 5;
+  const reviewText =
+    (review.reviewText || '').trim();
 
-  const rawBrand = (review.brand || review.storeName || '').trim();
+  const rating =
+    Number(review.rating) || 5;
+
+  const rawBrand =
+    (review.brand || review.storeName || '').trim();
 
   const brandAliases = {
-    'RAV': 'RAV Design',
+    RAV: 'RAV Design',
     'RAV DESIGN': 'RAV Design',
 
-    'NICOLE': 'Nicole Collection',
+    NICOLE: 'Nicole Collection',
     'NICOLE COLLECTION': 'Nicole Collection',
 
-    'HUSH PUPPIES': 'Hush Puppies Accessories',
-    'HUSH PUPPIES ACCESSORIES': 'Hush Puppies Accessories',
+    'HUSH PUPPIES':
+      'Hush Puppies Accessories',
 
-    'OBERMAIN': 'Obermain Accessories Official Store',
-    'OBERMAIN ACCESSORIES OFFICIAL STORE': 'Obermain Accessories Official Store',
+    'HUSH PUPPIES ACCESSORIES':
+      'Hush Puppies Accessories',
 
-    'JOHN LANGFORD': 'JOHN LANGFORD OF LONDON',
-    'JOHN LANGFORD OF LONDON': 'JOHN LANGFORD OF LONDON',
+    OBERMAIN:
+      'Obermain Accessories Official Store',
+
+    'OBERMAIN ACCESSORIES OFFICIAL STORE':
+      'Obermain Accessories Official Store',
+
+    'JOHN LANGFORD':
+      'JOHN LANGFORD OF LONDON',
+
+    'JOHN LANGFORD OF LONDON':
+      'JOHN LANGFORD OF LONDON',
   };
 
-  const brandKey = rawBrand.toUpperCase();
   const brandName =
-    brandAliases[brandKey] ||
+    brandAliases[rawBrand.toUpperCase()] ||
     rawBrand ||
     'Our Store';
 
-  const brandVoice = {
+  const brandVoices = {
     'RAV Design': `
 Premium, rugged, confident and sophisticated.
 Focus on quality, craftsmanship, durability and practical everyday style.
@@ -177,7 +181,7 @@ Never sound cute, overly casual or overly emotional.
 Elegant, feminine, modern and refined.
 Focus on flattering style, elegance, quality and effortless fashion.
 Use warm but polished language.
-Never sound overly masculine, rugged or corporate.
+Never sound rugged or corporate.
 `,
 
     'Hush Puppies Accessories': `
@@ -198,17 +202,23 @@ Focus on timeless style, refinement, craftsmanship and quality.
 Use elegant professional language.
 Avoid casual, cute or overly enthusiastic expressions.
 `,
-  }[brandName] || `
+  };
+
+  const brandVoice =
+    brandVoices[brandName] ||
+    `
 Professional, warm and brand-appropriate.
 `;
 
-  const hasComment = Boolean(reviewText);
+  const hasComment =
+    Boolean(reviewText);
 
-  const reviewDisplay = hasComment
-    ? `"${reviewText}"`
-    : '[NO WRITTEN COMMENT]';
+  const reviewDisplay =
+    hasComment
+      ? `"${reviewText}"`
+      : '[NO WRITTEN COMMENT]';
 
-  let actionRule;
+  let actionRule = '';
 
   if (rating >= 5 && !hasComment) {
     actionRule = `
@@ -216,21 +226,30 @@ Professional, warm and brand-appropriate.
 Use a concise professional appreciation reply.
 Do NOT invent what the customer liked.
 `;
-  } else if (rating === 4 && !hasComment) {
+  } else if (
+    rating === 4 &&
+    !hasComment
+  ) {
     actionRule = `
 4-STAR WITH NO COMMENT:
 Thank the customer for the rating and support.
 Do not imply that anything went wrong.
 Leave a positive opening for future service.
 `;
-  } else if (rating === 3 && !hasComment) {
+  } else if (
+    rating === 3 &&
+    !hasComment
+  ) {
     actionRule = `
 3-STAR WITH NO COMMENT:
 Remain neutral and professional.
 Thank the customer for taking the time to rate the store.
 Do not assume dissatisfaction or invent a problem.
 `;
-  } else if (rating === 2 && !hasComment) {
+  } else if (
+    rating === 2 &&
+    !hasComment
+  ) {
     actionRule = `
 2-STAR WITH NO COMMENT:
 Be polite and mildly apologetic.
@@ -238,14 +257,20 @@ Acknowledge that the experience may not have met expectations.
 Do not guess what the problem was.
 Invite the customer to contact the store if assistance is needed.
 `;
-  } else if (rating <= 1 && !hasComment) {
+  } else if (
+    rating <= 1 &&
+    !hasComment
+  ) {
     actionRule = `
 1-STAR WITH NO COMMENT:
 Be professional, respectful and apologetic.
 Do not guess what went wrong.
 Invite the customer to contact the store for assistance.
 `;
-  } else if (rating >= 4 && hasComment) {
+  } else if (
+    rating >= 4 &&
+    hasComment
+  ) {
     actionRule = `
 POSITIVE REVIEW WITH COMMENT:
 Read the customer's actual words carefully.
@@ -256,9 +281,10 @@ Do NOT fall back to a generic star-only reply.
   } else {
     actionRule = `
 REVIEW WITH COMMENT AND RATING 1-3:
-This review requires careful handling.
+Handle carefully.
 Acknowledge the customer's actual concern.
-Do not argue, become defensive or invent facts.
+Do not argue or become defensive.
+Do not invent facts.
 Do not promise compensation, replacement, refund or policy exceptions.
 `;
   }
@@ -282,32 +308,51 @@ ${actionRule}
 
 LANGUAGE:
 Reply in the same language used by the customer.
-For Malaysian Malay, use natural Malaysian Malay.
-For Chinese, use natural Simplified Chinese suitable for Malaysian customers.
-Do not translate unnaturally or use literal machine-translation phrasing.
 
-PRODUCT CONTEXT:
-Product information may only be used when supplied by the system.
-Never invent material, specifications, features, warranty, delivery promises, refund policy, replacement policy or other product information.
+For Malaysian Malay:
+Use natural Malaysian Malay.
 
-IMPORTANT:
+For Chinese:
+Use natural Simplified Chinese suitable for Malaysian customers.
+
+Do not use unnatural literal translation.
+
+PRODUCT INFORMATION:
+Only use product information supplied by the system.
+Never invent:
+- material
+- specifications
+- features
+- warranty
+- delivery promises
+- refund policy
+- replacement policy
+- product claims
+
+IMPORTANT RULES:
+
 - Start the reply with the exact brand name:
   ${brandName}
+
 - No emojis.
 - No hashtags.
 - No markdown.
 - No bullet points.
 - No quotation marks around the reply.
-- Do not mention AI, automation, prompts or models.
+- Do not mention AI.
+- Do not mention automation.
+- Do not mention prompts.
+- Do not mention models.
 - Do not use placeholders.
 - Do not invent customer experiences.
 - Do not invent product facts.
-- Do not claim a problem that the customer did not mention.
-- Do not promise anything the business cannot verify.
-- Keep the reply concise and natural.
-- Avoid repeating the same wording across brands.
-- Avoid generic copy-paste language.
-- The reply must sound like ${brandName}, not a generic marketplace seller.
+- Do not claim a problem the customer did not mention.
+- Do not promise anything unverifiable.
+- Keep the reply concise.
+- Keep it natural.
+- Avoid repetitive wording.
+- Make the wording different between brands.
+- The reply must sound like ${brandName}.
 
 Return ONLY the final customer reply.
 `.trim();
@@ -335,15 +380,19 @@ async function askGemini(prompt) {
   }
 
   const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+      apiKey
+    )}`;
 
   const response =
     await fetch(url, {
       method: 'POST',
+
       headers: {
         'Content-Type':
           'application/json',
       },
+
       body: JSON.stringify({
         systemInstruction: {
           parts: [
@@ -357,6 +406,7 @@ async function askGemini(prompt) {
         contents: [
           {
             role: 'user',
+
             parts: [
               {
                 text: prompt,
@@ -452,8 +502,6 @@ async function askOllama(prompt) {
     process.env.OLLAMA_MODEL ||
     'qwen3:4b';
 
-  // If env accidentally points to /api/generate,
-  // normalize it to the chat endpoint.
   const url =
     apiUrl.replace(
       /\/api\/generate\/?$/,
@@ -467,10 +515,12 @@ async function askOllama(prompt) {
   const response =
     await fetch(url, {
       method: 'POST',
+
       headers: {
         'Content-Type':
           'application/json',
       },
+
       body: JSON.stringify({
         model,
 
@@ -480,6 +530,7 @@ async function askOllama(prompt) {
             content:
               'You are a professional ecommerce customer service assistant. Return ONLY the final customer reply. Never explain your reasoning.',
           },
+
           {
             role: 'user',
             content: prompt,
@@ -521,100 +572,170 @@ async function askOllama(prompt) {
 // ============================================================
 // AI FALLBACK ENGINE
 //
-// Priority:
-// 1. Gemini
-// 2. Groq 8B
-// 3. Ollama
+// IMPORTANT:
+// Gemini quota state belongs to THIS bulk request.
+// Once Gemini returns 429/quota,
+// all remaining reviews go directly to Groq.
 // ============================================================
 
 async function generateWithFallback(
-  prompt
+  prompt,
+  state
 ) {
-  const providers = [
-    {
-      name: 'Gemini',
-      run: () =>
-        askGemini(prompt),
-    },
+  const errors = [];
 
-    {
-      name: 'Groq',
-      run: () =>
-        askGroqSafe(prompt),
-    },
+  // ----------------------------------------------------------
+  // GEMINI
+  // ----------------------------------------------------------
 
-    {
-      name: 'Ollama',
-      run: () =>
-        askOllama(prompt),
-    },
-  ];
-
-  const providerErrors = [];
-
-  for (
-    const provider of providers
-  ) {
+  if (!state.geminiQuotaExhausted) {
     try {
       console.log(
-        `[AI] Trying ${provider.name}...`
+        '[AI] Trying Gemini...'
       );
 
       const reply =
-        await provider.run();
+        await askGemini(prompt);
 
       if (
-        !reply ||
-        !reply.trim()
+        !reply?.trim() ||
+        hasPlaceholder(reply)
       ) {
         throw new Error(
-          `${provider.name} returned an empty reply.`
-        );
-      }
-
-      const cleaned =
-        reply.trim();
-
-      if (
-        hasPlaceholder(cleaned)
-      ) {
-        throw new Error(
-          `${provider.name} generated an unresolved placeholder.`
+          'Gemini generated an invalid reply.'
         );
       }
 
       console.log(
-        `[AI] SUCCESS: ${provider.name}`
+        '[AI] SUCCESS: Gemini'
       );
 
       return {
-        reply: cleaned,
-        provider: provider.name,
-        errors: providerErrors,
+        reply: reply.trim(),
+        provider: 'Gemini',
+        errors,
       };
     } catch (error) {
       const message =
         getErrorMessage(error);
 
       console.warn(
-        `[AI] ${provider.name} failed: ${message}`
+        `[AI] Gemini failed: ${message}`
       );
 
-      providerErrors.push({
-        provider: provider.name,
+      errors.push({
+        provider: 'Gemini',
         error: message,
       });
 
-      // IMPORTANT:
-      // Do NOT stop on rate limit.
-      // Immediately try the next provider.
-      continue;
+      // CRITICAL FIX:
+      // Once Gemini quota is exhausted,
+      // never call Gemini again during this bulk run.
+      if (isRateLimitError(error)) {
+        state.geminiQuotaExhausted = true;
+
+        console.log(
+          '[AI] Gemini quota exhausted.'
+        );
+
+        console.log(
+          '[AI] Switching remaining reviews directly to Groq.'
+        );
+      }
     }
+  }
+
+  // ----------------------------------------------------------
+  // GROQ
+  // ----------------------------------------------------------
+
+  try {
+    console.log(
+      '[AI] Trying Groq...'
+    );
+
+    const reply =
+      await askGroqSafe(prompt);
+
+    if (
+      !reply?.trim() ||
+      hasPlaceholder(reply)
+    ) {
+      throw new Error(
+        'Groq generated an invalid reply.'
+      );
+    }
+
+    console.log(
+      '[AI] SUCCESS: Groq'
+    );
+
+    return {
+      reply: reply.trim(),
+      provider: 'Groq',
+      errors,
+    };
+  } catch (error) {
+    const message =
+      getErrorMessage(error);
+
+    console.warn(
+      `[AI] Groq failed: ${message}`
+    );
+
+    errors.push({
+      provider: 'Groq',
+      error: message,
+    });
+  }
+
+  // ----------------------------------------------------------
+  // OLLAMA
+  // ----------------------------------------------------------
+
+  try {
+    console.log(
+      '[AI] Trying Ollama...'
+    );
+
+    const reply =
+      await askOllama(prompt);
+
+    if (
+      !reply?.trim() ||
+      hasPlaceholder(reply)
+    ) {
+      throw new Error(
+        'Ollama generated an invalid reply.'
+      );
+    }
+
+    console.log(
+      '[AI] SUCCESS: Ollama'
+    );
+
+    return {
+      reply: reply.trim(),
+      provider: 'Ollama',
+      errors,
+    };
+  } catch (error) {
+    const message =
+      getErrorMessage(error);
+
+    console.warn(
+      `[AI] Ollama failed: ${message}`
+    );
+
+    errors.push({
+      provider: 'Ollama',
+      error: message,
+    });
   }
 
   throw new Error(
     `All AI providers failed: ${JSON.stringify(
-      providerErrors
+      errors
     )}`
   );
 }
@@ -625,9 +746,9 @@ async function generateWithFallback(
 
 export async function POST(req) {
   try {
-    // ========================================================
-    // READ REQUEST
-    // ========================================================
+    // --------------------------------------------------------
+    // REQUEST
+    // --------------------------------------------------------
 
     const body =
       await req
@@ -666,27 +787,21 @@ export async function POST(req) {
       ids.length
     );
 
-    if (hasExplicitIds) {
-      console.log(
-        '[Bulk AI] IDs:',
-        ids
-      );
-    }
+    // --------------------------------------------------------
+    // GEMINI STATE FOR THIS BULK RUN
+    // --------------------------------------------------------
 
-    // ========================================================
-    // BUILD DATABASE QUERY
-    // ========================================================
+    const aiState = {
+      geminiQuotaExhausted: false,
+    };
+
+    // --------------------------------------------------------
+    // DATABASE QUERY
+    // --------------------------------------------------------
 
     let candidates = [];
 
     if (hasExplicitIds) {
-      // ------------------------------------------------------
-      // SELECTED MODE
-      //
-      // IMPORTANT:
-      // shopId is NOT required here.
-      // ------------------------------------------------------
-
       const uniqueIds = [
         ...new Set(
           ids
@@ -731,10 +846,6 @@ export async function POST(req) {
             uniqueIds.length,
         });
     } else {
-      // ------------------------------------------------------
-      // GENERATE-ALL MODE
-      // ------------------------------------------------------
-
       candidates =
         await db.review.findMany({
           where: {
@@ -760,9 +871,9 @@ export async function POST(req) {
         });
     }
 
-    // ========================================================
-    // FILTER REVIEWS
-    // ========================================================
+    // --------------------------------------------------------
+    // FILTER
+    // --------------------------------------------------------
 
     const reviewsToProcess =
       candidates.filter(
@@ -782,19 +893,11 @@ export async function POST(req) {
       total
     );
 
-    // ========================================================
+    // --------------------------------------------------------
     // NOTHING TO GENERATE
-    // ========================================================
+    // --------------------------------------------------------
 
     if (total === 0) {
-      console.log(
-        '[Bulk AI] Nothing to generate.'
-      );
-
-      console.log(
-        '================================================'
-      );
-
       return NextResponse.json({
         success: true,
 
@@ -809,28 +912,24 @@ export async function POST(req) {
       });
     }
 
-    // ========================================================
-    // PROCESS
-    // ========================================================
+    // --------------------------------------------------------
+    // COUNTERS
+    // --------------------------------------------------------
 
     let generatedCount = 0;
     let failedCount = 0;
 
     const errors = [];
 
-    // ========================================================
-    // SEQUENTIAL PROCESSING
-    // ========================================================
+    // --------------------------------------------------------
+    // PROCESS ONE BY ONE
+    // --------------------------------------------------------
 
     for (
       const review of reviewsToProcess
     ) {
       let success = false;
       let lastError = null;
-
-      // ------------------------------------------------------
-      // ATTEMPTS
-      // ------------------------------------------------------
 
       for (
         let attempt = 1;
@@ -845,13 +944,10 @@ export async function POST(req) {
           const prompt =
             buildPrompt(review);
 
-          // --------------------------------------------------
-          // GEMINI → GROQ → OLLAMA
-          // --------------------------------------------------
-
           const result =
             await generateWithFallback(
-              prompt
+              prompt,
+              aiState
             );
 
           const cleanedReply =
@@ -861,7 +957,7 @@ export async function POST(req) {
             result.provider;
 
           // --------------------------------------------------
-          // FINAL SAFETY
+          // SAFETY CHECK
           // --------------------------------------------------
 
           if (
@@ -869,7 +965,7 @@ export async function POST(req) {
             !cleanedReply.trim()
           ) {
             throw new Error(
-              'Received empty response from AI service.'
+              'AI returned an empty response.'
             );
           }
 
@@ -879,7 +975,7 @@ export async function POST(req) {
             )
           ) {
             throw new Error(
-              'AI generated a reply containing an unresolved placeholder.'
+              'AI generated a reply containing a placeholder.'
             );
           }
 
@@ -916,10 +1012,7 @@ export async function POST(req) {
             `[Bulk AI] Review ${review.id} attempt ${attempt} failed: ${lastError}`
           );
 
-          // --------------------------------------------------
-          // RETRY ONLY TEMPORARY ERRORS
-          // --------------------------------------------------
-
+          // Retry ONLY temporary errors
           if (
             attempt <= MAX_RETRIES &&
             isRetryableError(error)
@@ -929,7 +1022,7 @@ export async function POST(req) {
               attempt;
 
             console.log(
-              `[Bulk AI] Temporary error. Retrying in ${retryDelay}ms.`
+              `[Bulk AI] Retrying in ${retryDelay}ms...`
             );
 
             await delay(
@@ -943,9 +1036,9 @@ export async function POST(req) {
         }
       }
 
-      // ======================================================
-      // SUCCESS / FAILURE
-      // ======================================================
+      // --------------------------------------------------------
+      // RESULT
+      // --------------------------------------------------------
 
       if (success) {
         generatedCount++;
@@ -961,18 +1054,18 @@ export async function POST(req) {
         });
       }
 
-      // ======================================================
-      // DELAY
-      // ======================================================
-
       await delay(
         REQUEST_DELAY_MS
       );
     }
 
-    // ========================================================
-    // NORMAL RESPONSE
-    // ========================================================
+    // --------------------------------------------------------
+    // FINAL
+    // --------------------------------------------------------
+
+    console.log(
+      '================================================'
+    );
 
     console.log(
       '[Bulk AI] COMPLETE'
@@ -991,6 +1084,11 @@ export async function POST(req) {
     console.log(
       '[Bulk AI] Total:',
       total
+    );
+
+    console.log(
+      '[Bulk AI] Gemini quota exhausted:',
+      aiState.geminiQuotaExhausted
     );
 
     console.log(
@@ -1015,17 +1113,13 @@ export async function POST(req) {
           : undefined,
 
       message:
-        `Generated ${generatedCount} AI reply/replies${
+        `Generated ${generatedCount} selected AI replies${
           failedCount > 0
             ? `, ${failedCount} failed`
             : ''
         }.`,
     });
   } catch (error) {
-    // ========================================================
-    // TOP LEVEL ERROR
-    // ========================================================
-
     const message =
       getErrorMessage(error);
 
