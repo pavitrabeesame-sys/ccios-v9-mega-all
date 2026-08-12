@@ -1,6 +1,6 @@
-'use client';
+﻿'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,111 +27,83 @@ type ReplyFilter =
   | 'ALL';
 
 export default function ReviewsPage() {
-  const [reviews, setReviews] =
-    useState<Review[]>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [generateProgress, setGenerateProgress] = useState('');
 
-  const [loading, setLoading] =
-    useState<boolean>(true);
+  // FIX: store only the selected ID.
+  // The actual selected review is always read from fresh `reviews`.
+  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
 
-  const [syncing, setSyncing] =
-    useState<boolean>(false);
-
-  const [syncProgress, setSyncProgress] =
-    useState<string>('');
-
-  const [generating, setGenerating] =
-    useState<boolean>(false);
-
-  const [generateProgress, setGenerateProgress] =
-    useState<string>('');
-
-  const [selectedReview, setSelectedReview] =
-    useState<Review | null>(null);
-
-  const [activeTab, setActiveTab] =
-    useState<string>('ALL');
-
-  const [activeMarketplace, setActiveMarketplace] =
-    useState<string>('All');
-
-  const [activeStars, setActiveStars] =
-    useState<number[]>([]);
-
+  const [activeTab, setActiveTab] = useState('ALL');
+  const [activeMarketplace, setActiveMarketplace] = useState('All');
+  const [activeStars, setActiveStars] = useState<number[]>([]);
   const [replyFilter, setReplyFilter] =
     useState<ReplyFilter>('NOT_GENERATED');
 
-  const [selectedIds, setSelectedIds] =
-    useState<string[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [posting, setPosting] = useState(false);
 
-  const [posting, setPosting] =
-    useState<boolean>(false);
+  // =========================================================
+  // SELECTED REVIEW
+  // Always derived from the latest reviews state.
+  // This fixes the NOVA panel not showing a newly generated reply.
+  // =========================================================
+
+  const selectedReview = useMemo(
+    () =>
+      selectedReviewId
+        ? reviews.find((review) => review.id === selectedReviewId) || null
+        : null,
+    [reviews, selectedReviewId]
+  );
 
   // =========================================================
   // LOAD REVIEWS
-  // IMPORTANT:
-  // Never automatically jump to the first review.
-  // Preserve the currently selected review by ID.
   // =========================================================
 
   const loadReviews = async () => {
     try {
-      const res = await fetch(
-        '/api/reviews',
-        {
-          cache: 'no-store',
-        }
-      );
+      const res = await fetch('/api/reviews', {
+        cache: 'no-store',
+      });
 
-      const data =
-        await res.json();
+      const data = await res.json();
 
-      if (Array.isArray(data)) {
-        setReviews(data);
-
-        // ---------------------------------------------------
-        // Preserve selected review.
-        // This prevents the NOVA panel from jumping.
-        // ---------------------------------------------------
-
-        setSelectedReview((current) => {
-          if (!current) {
-            return data.length > 0
-              ? data[0]
-              : null;
-          }
-
-          const updated =
-            data.find(
-              (review: Review) =>
-                review.id === current.id
-            );
-
-          return updated || null;
-        });
-
-        // ---------------------------------------------------
-        // Remove selected IDs that no longer exist.
-        // ---------------------------------------------------
-
-        const validIds =
-          new Set(
-            data.map(
-              (review: Review) =>
-                review.id
-            )
-          );
-
-        setSelectedIds((previous) =>
-          previous.filter((id) =>
-            validIds.has(id)
-          )
-        );
+      if (!Array.isArray(data)) {
+        console.error('Unexpected reviews API response:', data);
+        return;
       }
-    } catch (err) {
-      console.error(
-        'Failed to load reviews:',
-        err
+
+      setReviews(data);
+
+      // Preserve selected review if it still exists.
+      setSelectedReviewId((currentId) => {
+        if (currentId && data.some((review: Review) => review.id === currentId)) {
+          return currentId;
+        }
+
+        // Only choose first review when nothing is selected.
+        if (!currentId && data.length > 0) {
+          return data[0].id;
+        }
+
+        return null;
+      });
+
+      // Remove IDs that no longer exist.
+      const validIds = new Set(
+        data.map((review: Review) => review.id)
       );
+
+      setSelectedIds((previous) =>
+        previous.filter((id) => validIds.has(id))
+      );
+    } catch (err) {
+      console.error('Failed to load reviews:', err);
     } finally {
       setLoading(false);
     }
@@ -142,102 +114,62 @@ export default function ReviewsPage() {
   }, []);
 
   // =========================================================
-  // SYNC LIVE SHOPEE REVIEWS
+  // SYNC SHOPEE
   // =========================================================
 
   const handleSync = async () => {
     setSyncing(true);
 
     try {
-      const shopsRes =
-        await fetch(
-          '/api/shopee/shops',
-          {
-            cache: 'no-store',
-          }
-        );
+      const shopsRes = await fetch('/api/shopee/shops', {
+        cache: 'no-store',
+      });
 
-      const shopsData =
-        await shopsRes.json();
-
-      const shopIds: string[] =
-        shopsData.shopIds || [];
+      const shopsData = await shopsRes.json();
+      const shopIds: string[] = shopsData.shopIds || [];
 
       if (shopIds.length === 0) {
-        alert(
-          'No authorized Shopee shops found.'
-        );
+        alert('No authorized Shopee shops found.');
         return;
       }
 
       let totalSynced = 0;
-
       const errors: string[] = [];
 
-      for (
-        let i = 0;
-        i < shopIds.length;
-        i++
-      ) {
-        const shopId =
-          shopIds[i];
+      for (let i = 0; i < shopIds.length; i++) {
+        const shopId = shopIds[i];
 
         setSyncProgress(
           `Syncing shop ${i + 1}/${shopIds.length}...`
         );
 
         try {
-          const res =
-            await fetch(
-              `/api/reviews/sync?shopId=${shopId}`,
-              {
-                method: 'POST',
-              }
-            );
+          const res = await fetch(
+            `/api/reviews/sync?shopId=${shopId}`,
+            { method: 'POST' }
+          );
 
-          const data =
-            await res.json();
+          const data = await res.json();
 
           if (data.success) {
-            totalSynced +=
-              Number(
-                data.syncedCount || 0
-              );
+            totalSynced += Number(data.syncedCount || 0);
           } else {
             errors.push(
-              `Shop ${shopId}: ${
-                data.error ||
-                'Unknown error'
-              }`
+              `Shop ${shopId}: ${data.error || 'Unknown error'}`
             );
           }
         } catch (err: any) {
           errors.push(
-            `Shop ${shopId}: ${
-              err?.message ||
-              'Unknown error'
-            }`
+            `Shop ${shopId}: ${err?.message || 'Unknown error'}`
           );
         }
       }
 
-      // -----------------------------------------------------
-      // IMPORTANT:
-      // Refresh ONCE after all shops are synced.
-      // Do not repeatedly reload the UI.
-      // -----------------------------------------------------
-
       await loadReviews();
-
-      setSyncProgress('');
 
       if (errors.length > 0) {
         alert(
-          `Synced ${totalSynced} reviews. ${
-            errors.length
-          } shop(s) had issues:\n${errors.join(
-            '\n'
-          )}`
+          `Synced ${totalSynced} reviews. ${errors.length} shop(s) had issues:\n${errors.join('\n')}`
         );
       } else {
         alert(
@@ -245,14 +177,8 @@ export default function ReviewsPage() {
         );
       }
     } catch (err) {
-      console.error(
-        'Sync failed:',
-        err
-      );
-
-      alert(
-        'Failed to connect to Shopee sync route.'
-      );
+      console.error('Sync failed:', err);
+      alert('Failed to connect to Shopee sync route.');
     } finally {
       setSyncing(false);
       setSyncProgress('');
@@ -260,202 +186,110 @@ export default function ReviewsPage() {
   };
 
   // =========================================================
-  // STAR FILTER
+  // FILTERS
   // =========================================================
 
-  const toggleStar = (
-    star: number
-  ) => {
+  const toggleStar = (star: number) => {
     setActiveStars((prev) =>
       prev.includes(star)
-        ? prev.filter(
-            (s) => s !== star
-          )
+        ? prev.filter((s) => s !== star)
         : [...prev, star]
     );
   };
 
-  // =========================================================
-  // REPLY STATUS FILTER
-  // =========================================================
+  const getReplyCategory = (review: Review): ReplyFilter => {
+    if (review.status === 'REPLIED') return 'REPLIED';
 
-  const getReplyCategory = (
-    review: Review
-  ): ReplyFilter => {
-    if (
-      review.status ===
-      'REPLIED'
-    ) {
-      return 'REPLIED';
-    }
-
-    if (
-      review.aiReply &&
-      review.aiReply.trim()
-    ) {
+    if (review.aiReply && review.aiReply.trim()) {
       return 'GENERATED';
     }
 
     return 'NOT_GENERATED';
   };
 
-  // =========================================================
-  // FILTER REVIEWS
-  // =========================================================
+  const filteredReviews = useMemo(() => {
+    return reviews.filter((review) => {
+      const brand = (review.brand || '').toUpperCase();
+      const store = (review.storeName || '').toUpperCase();
 
-  const filteredReviews =
-    useMemo(() => {
-      return reviews.filter(
-        (r) => {
-          const brand =
-            (
-              r.brand || ''
-            ).toUpperCase();
+      const brandMatch =
+        activeTab === 'ALL' ||
+        brand === activeTab ||
+        store.includes(activeTab);
 
-          const store =
-            (
-              r.storeName || ''
-            ).toUpperCase();
+      const marketplaceMatch =
+        activeMarketplace === 'All' ||
+        (review.marketplace || '').toUpperCase() ===
+          activeMarketplace.toUpperCase();
 
-          const brandMatch =
-            activeTab === 'ALL' ||
-            brand === activeTab ||
-            store.includes(
-              activeTab
-            );
+      const starMatch =
+        activeStars.length === 0 ||
+        activeStars.includes(review.rating);
 
-          const marketMatch =
-            activeMarketplace ===
-              'All' ||
-            (
-              r.marketplace || ''
-            ).toUpperCase() ===
-              activeMarketplace.toUpperCase();
+      const replyMatch =
+        replyFilter === 'ALL' ||
+        getReplyCategory(review) === replyFilter;
 
-          const starMatch =
-            activeStars.length ===
-              0 ||
-            activeStars.includes(
-              r.rating
-            );
-
-          const replyCategory =
-            getReplyCategory(r);
-
-          const replyMatch =
-            replyFilter === 'ALL' ||
-            replyCategory ===
-              replyFilter;
-
-          return (
-            brandMatch &&
-            marketMatch &&
-            starMatch &&
-            replyMatch
-          );
-        }
+      return (
+        brandMatch &&
+        marketplaceMatch &&
+        starMatch &&
+        replyMatch
       );
-    }, [
-      reviews,
-      activeTab,
-      activeMarketplace,
-      activeStars,
-      replyFilter,
-    ]);
+    });
+  }, [
+    reviews,
+    activeTab,
+    activeMarketplace,
+    activeStars,
+    replyFilter,
+  ]);
+
+  const notGeneratedCount = reviews.filter(
+    (review) => getReplyCategory(review) === 'NOT_GENERATED'
+  ).length;
+
+  const generatedCount = reviews.filter(
+    (review) => getReplyCategory(review) === 'GENERATED'
+  ).length;
+
+  const repliedCount = reviews.filter(
+    (review) => getReplyCategory(review) === 'REPLIED'
+  ).length;
+
+  const pendingCount = reviews.filter(
+    (review) => review.status === 'PENDING'
+  ).length;
+
+  const selectedPendingIds = selectedIds.filter((id) => {
+    const review = reviews.find((item) => item.id === id);
+
+    return Boolean(
+      review &&
+        review.status !== 'REPLIED' &&
+        !review.aiReply
+    );
+  });
+
+  const selectedPendingCount = selectedPendingIds.length;
 
   // =========================================================
-  // COUNTS
-  // =========================================================
-
-  const notGeneratedCount =
-    reviews.filter(
-      (review) =>
-        getReplyCategory(
-          review
-        ) === 'NOT_GENERATED'
-    ).length;
-
-  const generatedCount =
-    reviews.filter(
-      (review) =>
-        getReplyCategory(
-          review
-        ) === 'GENERATED'
-    ).length;
-
-  const repliedCount =
-    reviews.filter(
-      (review) =>
-        getReplyCategory(
-          review
-        ) === 'REPLIED'
-    ).length;
-
-  const pendingCount =
-    reviews.filter(
-      (review) =>
-        review.status ===
-        'PENDING'
-    ).length;
-
-  // =========================================================
-  // SELECTED GENERATABLE IDS
-  //
-  // IMPORTANT:
-  // Only selected reviews with NO AI reply
-  // and NOT already REPLIED can be generated.
-  // =========================================================
-
-  const selectedPendingIds =
-    filteredReviews
-      .filter(
-        (review) =>
-          selectedIds.includes(
-            review.id
-          ) &&
-          review.status !==
-            'REPLIED' &&
-          !review.aiReply
-      )
-      .map(
-        (review) =>
-          review.id
-      );
-
-  const selectedPendingCount =
-    selectedPendingIds.length;
-
-  // =========================================================
-  // SELECT ALL
+  // SELECTION
   // =========================================================
 
   const handleSelectAll = (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
     if (e.target.checked) {
-      const allFilteredIds =
-        filteredReviews
-          .filter(
-            (review) =>
-              review.status !==
-                'REPLIED'
-          )
-          .map(
-            (review) =>
-              review.id
-          );
+      const ids = filteredReviews
+        .filter((review) => review.status !== 'REPLIED')
+        .map((review) => review.id);
 
-      setSelectedIds(
-        allFilteredIds
-      );
+      setSelectedIds(ids);
     } else {
       setSelectedIds([]);
     }
   };
-
-  // =========================================================
-  // SELECT ONE
-  // =========================================================
 
   const toggleSelectOne = (
     id: string,
@@ -465,489 +299,369 @@ export default function ReviewsPage() {
 
     setSelectedIds((prev) =>
       prev.includes(id)
-        ? prev.filter(
-            (i) => i !== id
-          )
+        ? prev.filter((item) => item !== id)
         : [...prev, id]
     );
   };
 
   // =========================================================
-  // AI GENERATION HELPER
-  //
-  // IMPORTANT FIX:
-  // We DO NOT call loadReviews()
-  // after every batch.
-  //
-  // That was causing the list to reorder/jump.
-  //
-  // We process all batches first,
-  // then refresh ONE TIME.
+  // AI GENERATION
   // =========================================================
 
-  const generateReviewBatches =
-    async (
-      ids: string[],
-      mode:
-        | 'all'
-        | 'selected'
-    ) => {
-      if (
-        ids.length === 0
-      ) {
-        return {
-          totalGenerated: 0,
-          totalFailed: 0,
-        };
+  const generateReviewBatches = async (
+    ids: string[],
+    mode: 'all' | 'selected'
+  ) => {
+    if (ids.length === 0) {
+      return {
+        totalGenerated: 0,
+        totalFailed: 0,
+      };
+    }
+
+    let totalGenerated = 0;
+    let totalFailed = 0;
+    let remaining = [...ids];
+
+    while (remaining.length > 0) {
+      const batch = remaining.slice(0, BATCH_SIZE);
+
+      const processedBefore =
+        totalGenerated + totalFailed;
+
+      const processedAfter =
+        processedBefore + batch.length;
+
+      setGenerateProgress(
+        mode === 'selected'
+          ? `Generating selected ${processedBefore + 1}-${processedAfter} of ${ids.length}...`
+          : `Generating ${processedBefore + 1}-${processedAfter} of ${ids.length}...`
+      );
+
+      const res = await fetch('/api/reviews/generate-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ids: batch,
+          limit: BATCH_SIZE,
+        }),
+      });
+
+      let data: any = {};
+
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
       }
 
-      let totalGenerated = 0;
-      let totalFailed = 0;
+      console.log('[Generate] Response:', data);
 
-      let remaining = [
-        ...ids,
-      ];
+      const errorText = String(
+        data.error || data.message || ''
+      ).toLowerCase();
 
-      while (
-        remaining.length > 0
-      ) {
-        const batch =
-          remaining.slice(
-            0,
-            BATCH_SIZE
-          );
+      const rateLimited =
+        res.status === 429 ||
+        data.rateLimited === true ||
+        data.code === 'rate_limit_exceeded' ||
+        errorText.includes('rate limit') ||
+        errorText.includes('quota') ||
+        errorText.includes('429');
 
-        const processedBefore =
-          totalGenerated +
-          totalFailed;
+      if (rateLimited) {
+        totalFailed += batch.length;
 
-        const processedAfter =
-          processedBefore +
-          batch.length;
-
-        setGenerateProgress(
-          mode ===
-            'selected'
-            ? `Generating selected ${processedBefore + 1}-${processedAfter} of ${ids.length}...`
-            : `Generating ${processedBefore + 1}-${processedAfter} of ${ids.length}...`
+        alert(
+          data.message ||
+            data.error ||
+            'AI generation stopped because an AI provider rate limit was reached.'
         );
 
-        console.log(
-          `[Generate ${mode}] Sending batch:`,
-          batch
-        );
+        break;
+      }
 
-        const res =
-          await fetch(
-            '/api/reviews/generate-all',
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type':
-                  'application/json',
-              },
-              body: JSON.stringify(
-                {
-                  ids: batch,
-                  limit:
-                    BATCH_SIZE,
-                }
-              ),
-            }
-          );
+      if (!res.ok || !data.success) {
+        totalFailed += batch.length;
 
-        let data: any = {};
-
-        try {
-          data =
-            await res.json();
-        } catch {
-          data = {};
-        }
-
-        console.log(
-          `[Generate ${mode}] Response:`,
+        console.error(
+          '[Generate] Batch failed:',
           data
         );
 
-        // ===================================================
-        // RATE LIMIT
-        // ===================================================
-
-        const rateLimited =
-          res.status ===
-            429 ||
-          data.rateLimited ===
-            true ||
-          data.code ===
-            'rate_limit_exceeded' ||
-          String(
-            data.error || ''
-          )
-            .toLowerCase()
-            .includes(
-              'rate limit'
-            ) ||
-          String(
-            data.message || ''
-          )
-            .toLowerCase()
-            .includes(
-              'rate limit'
-            );
-
-        if (rateLimited) {
-          totalFailed +=
-            batch.length;
-
-          alert(
-            data.message ||
-              'AI generation stopped because the AI provider rate limit was reached.'
-          );
-
-          break;
-        }
-
-        // ===================================================
-        // OTHER API FAILURE
-        // ===================================================
-
-        if (
-          !res.ok ||
-          !data.success
-        ) {
-          totalFailed +=
-            batch.length;
-
-          console.error(
-            `[Generate ${mode}] Batch failed:`,
-            data
-          );
-
-          break;
-        }
-
-        // ===================================================
-        // SUCCESS
-        // ===================================================
-
-        totalGenerated +=
-          Number(
-            data.generated || 0
-          );
-
-        totalFailed +=
-          Number(
-            data.failed || 0
-          );
-
-        remaining =
-          remaining.slice(
-            batch.length
-          );
-
-        // ---------------------------------------------------
-        // DO NOT reload here.
-        // ---------------------------------------------------
+        break;
       }
 
-      // =====================================================
-      // ONE REFRESH AFTER EVERYTHING
-      // =====================================================
+      totalGenerated += Number(data.generated || 0);
+      totalFailed += Number(data.failed || 0);
 
-      await loadReviews();
+      remaining = remaining.slice(batch.length);
+    }
 
-      return {
-        totalGenerated,
-        totalFailed,
-      };
+    // IMPORTANT:
+    // Refresh exactly once after all batches.
+    // The selected panel will automatically receive the
+    // fresh aiReply because selectedReview is derived from reviews.
+    await loadReviews();
+
+    return {
+      totalGenerated,
+      totalFailed,
     };
+  };
 
   // =========================================================
   // GENERATE ALL
   // =========================================================
 
-  const handleGenerateAll =
-    async () => {
-      const pendingIds =
-        filteredReviews
-          .filter(
-            (review) =>
-              review.status !==
-                'REPLIED' &&
-              !review.aiReply
-          )
-          .map(
-            (review) =>
-              review.id
-          );
+  const handleGenerateAll = async () => {
+    const pendingIds = filteredReviews
+      .filter(
+        (review) =>
+          review.status !== 'REPLIED' &&
+          !review.aiReply
+      )
+      .map((review) => review.id);
 
-      if (
-        pendingIds.length ===
-        0
-      ) {
-        alert(
-          'No reviews without AI replies in the current filter.'
-        );
-        return;
-      }
+    if (pendingIds.length === 0) {
+      alert(
+        'No reviews without AI replies in the current filter.'
+      );
+      return;
+    }
 
-      setGenerating(true);
+    setGenerating(true);
 
-      try {
-        const result =
-          await generateReviewBatches(
-            pendingIds,
-            'all'
-          );
+    try {
+      const result = await generateReviewBatches(
+        pendingIds,
+        'all'
+      );
 
-        const {
-          totalGenerated,
-          totalFailed,
-        } = result;
+      alert(
+        `Generated ${result.totalGenerated} AI replies${
+          result.totalFailed > 0
+            ? `, ${result.totalFailed} failed`
+            : ''
+        }.`
+      );
+    } catch (err) {
+      console.error('Generate all failed:', err);
 
-        setGenerateProgress('');
-
-        alert(
-          `Generated ${totalGenerated} AI replies${
-            totalFailed > 0
-              ? `, ${totalFailed} failed`
-              : ''
-          }.`
-        );
-      } catch (err) {
-        console.error(
-          'Generate all failed:',
-          err
-        );
-
-        alert(
-          err instanceof Error
-            ? err.message
-            : 'Failed to generate replies.'
-        );
-      } finally {
-        setGenerating(false);
-        setGenerateProgress('');
-      }
-    };
+      alert(
+        err instanceof Error
+          ? err.message
+          : 'Failed to generate replies.'
+      );
+    } finally {
+      setGenerating(false);
+      setGenerateProgress('');
+    }
+  };
 
   // =========================================================
   // GENERATE SELECTED
   // =========================================================
 
-  const handleGenerateSelected =
-    async () => {
-      // -----------------------------------------------------
-      // USE THE SELECTED IDS DIRECTLY.
-      //
-      // This prevents the selection from changing because
-      // of a UI refresh/filter.
-      // -----------------------------------------------------
+  const handleGenerateSelected = async () => {
+    const validIds = [...selectedIds].filter((id) => {
+      const review = reviews.find((item) => item.id === id);
 
-      const idsToGenerate =
-        [...selectedIds];
+      return Boolean(
+        review &&
+          review.status !== 'REPLIED' &&
+          !review.aiReply
+      );
+    });
 
-      // -----------------------------------------------------
-      // Validate against current reviews.
-      // -----------------------------------------------------
+    if (validIds.length === 0) {
+      alert(
+        'Please select one or more NOT GENERATED reviews.'
+      );
+      return;
+    }
 
-      const validIds =
-        idsToGenerate.filter(
-          (id) => {
-            const review =
-              reviews.find(
-                (r) =>
-                  r.id === id
-              );
+    setGenerating(true);
 
-            return (
-              review &&
-              review.status !==
-                'REPLIED' &&
-              !review.aiReply
-            );
-          }
-        );
+    try {
+      const result = await generateReviewBatches(
+        validIds,
+        'selected'
+      );
 
-      if (
-        validIds.length ===
-        0
-      ) {
-        alert(
-          'Please select one or more NOT GENERATED reviews.'
-        );
-        return;
-      }
+      alert(
+        `Generated ${result.totalGenerated} selected AI replies${
+          result.totalFailed > 0
+            ? `, ${result.totalFailed} failed`
+            : ''
+        }.`
+      );
 
-      setGenerating(true);
+      setSelectedIds((previous) =>
+        previous.filter(
+          (id) => !validIds.includes(id)
+        )
+      );
+    } catch (err) {
+      console.error(
+        'Generate selected failed:',
+        err
+      );
 
-      try {
-        console.log(
-          '[Generate Selected] Selected IDs:',
-          validIds
-        );
+      alert(
+        err instanceof Error
+          ? err.message
+          : 'Failed to generate selected replies.'
+      );
+    } finally {
+      setGenerating(false);
+      setGenerateProgress('');
+    }
+  };
 
-        const result =
-          await generateReviewBatches(
-            validIds,
-            'selected'
-          );
+  // =========================================================
+  // GENERATE SINGLE
+  // =========================================================
 
-        const {
-          totalGenerated,
-          totalFailed,
-        } = result;
+  const handleGenerateSingle = async () => {
+    if (
+      !selectedReview ||
+      selectedReview.status === 'REPLIED' ||
+      selectedReview.aiReply
+    ) {
+      return;
+    }
 
-        setGenerateProgress('');
+    const id = selectedReview.id;
 
-        alert(
-          `Generated ${totalGenerated} selected AI replies${
-            totalFailed > 0
-              ? `, ${totalFailed} failed`
-              : ''
-          }.`
-        );
+    setSelectedIds((previous) =>
+      previous.includes(id)
+        ? previous
+        : [...previous, id]
+    );
 
-        // ---------------------------------------------------
-        // Clear only generated selections.
-        // ---------------------------------------------------
+    setGenerating(true);
 
-        setSelectedIds(
-          (previous) =>
-            previous.filter(
-              (id) =>
-                !validIds.includes(
-                  id
-                )
-            )
-        );
-      } catch (err) {
-        console.error(
-          'Generate selected failed:',
-          err
-        );
+    try {
+      const result = await generateReviewBatches(
+        [id],
+        'selected'
+      );
 
-        alert(
-          err instanceof Error
-            ? err.message
-            : 'Failed to generate selected replies.'
-        );
-      } finally {
-        setGenerating(false);
-        setGenerateProgress('');
-      }
-    };
+      alert(
+        `Generated ${result.totalGenerated} AI reply${
+          result.totalFailed > 0
+            ? `, ${result.totalFailed} failed`
+            : ''
+        }.`
+      );
+
+      // Do NOT change selectedReviewId.
+      // The fresh review from loadReviews() remains selected.
+      setSelectedIds((previous) =>
+        previous.filter((item) => item !== id)
+      );
+    } catch (err) {
+      console.error(
+        'Generate single failed:',
+        err
+      );
+
+      alert(
+        err instanceof Error
+          ? err.message
+          : 'Failed to generate reply.'
+      );
+    } finally {
+      setGenerating(false);
+      setGenerateProgress('');
+    }
+  };
 
   // =========================================================
   // POST REPLY
   // =========================================================
 
-  const handleReplySelected =
-    async (
-      idsToPost: string[]
-    ) => {
-      if (
-        idsToPost.length ===
-        0
-      ) {
-        return;
-      }
+  const handleReplySelected = async (
+    idsToPost: string[]
+  ) => {
+    if (idsToPost.length === 0) return;
 
-      // -----------------------------------------------------
-      // Never post a reply for an already replied review.
-      // -----------------------------------------------------
+    const validIds = idsToPost.filter((id) => {
+      const review = reviews.find((item) => item.id === id);
 
-      const validIds =
-        idsToPost.filter(
-          (id) => {
-            const review =
-              reviews.find(
-                (r) =>
-                  r.id === id
-              );
+      return Boolean(
+        review &&
+          review.status !== 'REPLIED' &&
+          review.aiReply
+      );
+    });
 
-            return (
-              review &&
-              review.status !==
-                'REPLIED'
-            );
-          }
-        );
+    if (validIds.length === 0) {
+      alert(
+        'No eligible generated reviews selected.'
+      );
+      return;
+    }
 
-      if (
-        validIds.length ===
-        0
-      ) {
-        alert(
-          'No eligible reviews selected.'
-        );
-        return;
-      }
+    setPosting(true);
 
-      setPosting(true);
-
-      try {
-        const res =
-          await fetch(
-            '/api/reviews/reply-all',
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type':
-                  'application/json',
-              },
-              body: JSON.stringify({
-                ids: validIds,
-              }),
-            }
-          );
-
-        const data =
-          await res.json();
-
-        if (data.success) {
-          const postedCount =
-            data.posted !==
-            undefined
-              ? data.posted
-              : validIds.length;
-
-          alert(
-            `Successfully posted ${postedCount} reply/replies!${
-              data.failed > 0
-                ? ` (${data.failed} failed)`
-                : ''
-            }`
-          );
-
-          setSelectedIds([]);
-
-          await loadReviews();
-        } else {
-          alert(
-            `Failed to post replies: ${
-              data.error ||
-              'Unknown error'
-            }`
-          );
+    try {
+      const res = await fetch(
+        '/api/reviews/reply-all',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ids: validIds,
+          }),
         }
-      } catch (err: any) {
-        console.error(
-          'Reply posting error:',
-          err
-        );
+      );
+
+      const data = await res.json();
+
+      if (data.success) {
+        const postedCount =
+          data.posted !== undefined
+            ? data.posted
+            : validIds.length;
 
         alert(
-          `Error posting replies: ${
-            err?.message ||
-            'Unknown error'
+          `Successfully posted ${postedCount} reply/replies!${
+            data.failed > 0
+              ? ` (${data.failed} failed)`
+              : ''
           }`
         );
-      } finally {
-        setPosting(false);
+
+        setSelectedIds([]);
+        await loadReviews();
+      } else {
+        alert(
+          `Failed to post replies: ${
+            data.error || 'Unknown error'
+          }`
+        );
       }
-    };
+    } catch (err: any) {
+      console.error(
+        'Reply posting error:',
+        err
+      );
+
+      alert(
+        `Error posting replies: ${
+          err?.message || 'Unknown error'
+        }`
+      );
+    } finally {
+      setPosting(false);
+    }
+  };
 
   // =========================================================
   // UI
@@ -956,18 +670,12 @@ export default function ReviewsPage() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col flex-1">
 
-      {/* =====================================================
-          HEADER
-          ===================================================== */}
-
       <header className="border-b border-gray-800 px-8 py-4 flex items-center justify-between bg-gray-900">
-
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold tracking-wide text-white">
               Reviews
             </h1>
-
             <span className="text-gray-400">
               — Heart of System
             </span>
@@ -987,321 +695,159 @@ export default function ReviewsPage() {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap justify-end">
+          {syncing && syncProgress && (
+            <span className="text-xs text-blue-400">
+              {syncProgress}
+            </span>
+          )}
 
-          {/* SYNC PROGRESS */}
+          {generating && generateProgress && (
+            <span className="text-xs text-purple-400">
+              {generateProgress}
+            </span>
+          )}
 
-          {syncing &&
-            syncProgress && (
-              <span className="text-xs text-blue-400">
-                {syncProgress}
-              </span>
-            )}
-
-          {/* GENERATE PROGRESS */}
-
-          {generating &&
-            generateProgress && (
-              <span className="text-xs text-purple-400">
-                {generateProgress}
-              </span>
-            )}
-
-          {/* =================================================
-              REPLY SELECTED
-              ================================================= */}
-
-          {selectedIds.length >
-            0 && (
+          {selectedIds.length > 0 && (
             <button
               onClick={() =>
-                handleReplySelected(
-                  selectedIds
-                )
+                handleReplySelected(selectedIds)
               }
               disabled={
                 posting ||
                 syncing ||
                 generating
               }
-              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-4 py-2 rounded-lg flex items-center gap-2 transition-colors font-medium shadow-lg disabled:opacity-50 cursor-pointer"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-4 py-2 rounded-lg font-medium shadow-lg disabled:opacity-50"
             >
-              <svg
-                className={`w-4 h-4 ${
-                  posting
-                    ? 'animate-spin'
-                    : ''
-                }`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-
               {posting
                 ? 'Posting...'
                 : `Reply Selected (${selectedIds.length})`}
             </button>
           )}
 
-          {/* =================================================
-              GENERATE SELECTED
-              ================================================= */}
-
           <button
-            onClick={
-              handleGenerateSelected
-            }
+            onClick={handleGenerateSelected}
             disabled={
               generating ||
               syncing ||
               posting ||
-              selectedPendingCount ===
-                0
+              selectedPendingCount === 0
             }
-            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-4 py-2 rounded-lg flex items-center gap-2 transition-colors font-medium shadow-lg disabled:opacity-50 cursor-pointer"
+            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-4 py-2 rounded-lg font-medium shadow-lg disabled:opacity-50"
           >
-            <svg
-              className={`w-4 h-4 ${
-                generating
-                  ? 'animate-spin'
-                  : ''
-              }`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M13 10V3L4 14h7v7l9-11h-7z"
-              />
-            </svg>
-
             {generating
               ? 'Generating...'
               : `Generate Selected (${selectedPendingCount})`}
           </button>
 
-          {/* =================================================
-              GENERATE ALL
-              ================================================= */}
-
           <button
-            onClick={
-              handleGenerateAll
-            }
+            onClick={handleGenerateAll}
             disabled={
               generating ||
               syncing ||
               posting
             }
-            className="bg-purple-600 hover:bg-purple-500 text-white text-xs px-4 py-2 rounded-lg flex items-center gap-2 transition-colors font-medium shadow-lg disabled:opacity-50 cursor-pointer"
+            className="bg-purple-600 hover:bg-purple-500 text-white text-xs px-4 py-2 rounded-lg font-medium shadow-lg disabled:opacity-50"
           >
-            <svg
-              className={`w-4 h-4 ${
-                generating
-                  ? 'animate-spin'
-                  : ''
-              }`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M13 10V3L4 14h7v7l9-11h-7z"
-              />
-            </svg>
-
             {generating
               ? 'Generating...'
               : 'Generate All Replies'}
           </button>
 
-          {/* =================================================
-              SHOPEE SYNC
-              ================================================= */}
-
           <button
-            onClick={
-              handleSync
-            }
+            onClick={handleSync}
             disabled={
               syncing ||
               generating ||
               posting
             }
-            className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-lg flex items-center gap-2 transition-colors font-medium shadow-lg disabled:opacity-50 cursor-pointer"
+            className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-lg font-medium shadow-lg disabled:opacity-50"
           >
-            <svg
-              className={`w-4 h-4 ${
-                syncing
-                  ? 'animate-spin'
-                  : ''
-              }`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-
             {syncing
               ? 'Syncing Live...'
               : 'Sync Live Reviews (Shopee)'}
           </button>
 
-          {/* PENDING */}
-
           <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
             <span className="text-gray-400">
               Pending
             </span>
-
             <span className="text-amber-500 font-bold">
               {pendingCount}
             </span>
           </div>
-
         </div>
       </header>
 
-      {/* =====================================================
-          FILTER BAR
-          ===================================================== */}
-
       <div className="px-8 py-4 border-b border-gray-800 bg-gray-900 space-y-4">
-
-        {/* ===================================================
-            REPLY STATUS FILTER
-            =================================================== */}
-
         <div className="flex items-center gap-2 flex-wrap">
-
           <span className="text-xs text-gray-500 mr-1">
             Replies:
           </span>
 
           {[
             {
-              key:
-                'NOT_GENERATED' as ReplyFilter,
-              label:
-                'Not Generated',
-              count:
-                notGeneratedCount,
+              key: 'NOT_GENERATED' as ReplyFilter,
+              label: 'Not Generated',
+              count: notGeneratedCount,
             },
             {
-              key:
-                'GENERATED' as ReplyFilter,
-              label:
-                'Generated',
-              count:
-                generatedCount,
+              key: 'GENERATED' as ReplyFilter,
+              label: 'Generated',
+              count: generatedCount,
             },
             {
-              key:
-                'REPLIED' as ReplyFilter,
-              label:
-                'Replied',
-              count:
-                repliedCount,
+              key: 'REPLIED' as ReplyFilter,
+              label: 'Replied',
+              count: repliedCount,
             },
             {
-              key:
-                'ALL' as ReplyFilter,
-              label:
-                'All',
-              count:
-                reviews.length,
+              key: 'ALL' as ReplyFilter,
+              label: 'All',
+              count: reviews.length,
             },
-          ].map(
-            (filter) => (
-              <button
-                key={
-                  filter.key
-                }
-                onClick={() =>
-                  setReplyFilter(
-                    filter.key
-                  )
-                }
-                className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
-                  replyFilter ===
-                  filter.key
-                    ? 'bg-purple-600 text-white shadow-lg'
-                    : 'bg-gray-800 text-gray-400 hover:text-white border border-gray-700'
-                }`}
-              >
-                {filter.label}
-                {' '}
-                ({filter.count})
-              </button>
-            )
-          )}
-
+          ].map((filter) => (
+            <button
+              key={filter.key}
+              onClick={() =>
+                setReplyFilter(filter.key)
+              }
+              className={`px-4 py-1.5 rounded-full text-xs font-medium ${
+                replyFilter === filter.key
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-gray-800 text-gray-400 border border-gray-700'
+              }`}
+            >
+              {filter.label} ({filter.count})
+            </button>
+          ))}
         </div>
 
         <div className="flex items-center justify-between flex-wrap gap-3">
-
           <div className="flex items-center gap-4 flex-wrap">
-
-            {/* =================================================
-                SELECT ALL FILTERED
-                ================================================= */}
-
-            <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
-
+            <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
               <input
                 type="checkbox"
                 checked={
-                  filteredReviews.length >
-                    0 &&
+                  filteredReviews.length > 0 &&
                   filteredReviews
                     .filter(
                       (review) =>
-                        review.status !==
-                        'REPLIED'
+                        review.status !== 'REPLIED'
                     )
-                    .every(
-                      (review) =>
-                        selectedIds.includes(
-                          review.id
-                        )
+                    .every((review) =>
+                      selectedIds.includes(
+                        review.id
+                      )
                     )
                 }
-                onChange={
-                  handleSelectAll
-                }
-                className="rounded bg-gray-800 border-gray-700 text-blue-600 focus:ring-0 cursor-pointer w-4 h-4"
+                onChange={handleSelectAll}
+                className="w-4 h-4 rounded bg-gray-800 border-gray-700"
               />
-
-              <span>
-                Select All Filtered
-              </span>
-
+              Select All Filtered
             </label>
 
-            {/* =================================================
-                BRAND FILTERS
-                ================================================= */}
-
             <div className="flex gap-2 flex-wrap">
-
               {[
                 'ALL',
                 'RAV',
@@ -1310,290 +856,200 @@ export default function ReviewsPage() {
                 'HUSH',
                 'BHPC',
                 'JOHN_LANGFORD',
-              ].map(
-                (brand) => (
-                  <button
-                    key={brand}
-                    onClick={() =>
-                      setActiveTab(
-                        brand
-                      )
-                    }
-                    className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
-                      activeTab ===
-                      brand
-                        ? 'bg-blue-600 text-white shadow-lg'
-                        : 'bg-gray-800 text-gray-400 hover:text-white border border-gray-700'
-                    }`}
-                  >
-                    {brand}{' '}
-                    {brand ===
-                      'ALL' &&
-                      `(${reviews.length})`}
-                  </button>
-                )
-              )}
-
+              ].map((brand) => (
+                <button
+                  key={brand}
+                  onClick={() =>
+                    setActiveTab(brand)
+                  }
+                  className={`px-4 py-1.5 rounded-full text-xs font-medium ${
+                    activeTab === brand
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-800 text-gray-400 border border-gray-700'
+                  }`}
+                >
+                  {brand}
+                  {brand === 'ALL' &&
+                    ` (${reviews.length})`}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* ===================================================
-              STAR FILTER
-              =================================================== */}
-
           <div className="flex gap-2 items-center flex-wrap">
-
-            <span className="text-xs text-gray-500 mr-1">
+            <span className="text-xs text-gray-500">
               Stars:
             </span>
 
-            {[5, 4, 3, 2, 1].map(
-              (star) => (
-                <button
-                  key={star}
-                  onClick={() =>
-                    toggleStar(
-                      star
-                    )
-                  }
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer border ${
-                    activeStars.includes(
-                      star
-                    )
-                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                      : 'bg-gray-800 text-gray-400 border-gray-700 hover:text-white'
-                  }`}
-                >
-                  {star}★
-                </button>
-              )
-            )}
+            {[5, 4, 3, 2, 1].map((star) => (
+              <button
+                key={star}
+                onClick={() =>
+                  toggleStar(star)
+                }
+                className={`px-3 py-1 rounded-full text-xs border ${
+                  activeStars.includes(star)
+                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                    : 'bg-gray-800 text-gray-400 border-gray-700'
+                }`}
+              >
+                {star}★
+              </button>
+            ))}
 
-            {activeStars.length >
-              0 && (
+            {activeStars.length > 0 && (
               <button
                 onClick={() =>
                   setActiveStars([])
                 }
-                className="text-xs text-gray-500 hover:text-white underline cursor-pointer ml-1"
+                className="text-xs text-gray-500 underline"
               >
                 Clear
               </button>
             )}
-
           </div>
 
-          {/* ===================================================
-              MARKETPLACE FILTER
-              =================================================== */}
-
           <div className="flex gap-2 bg-gray-800 p-1 rounded-full border border-gray-700">
-
-            {[
-              'All',
-              'Shopee',
-              'Lazada',
-            ].map(
-              (mkt) => (
+            {['All', 'Shopee', 'Lazada'].map(
+              (marketplace) => (
                 <button
-                  key={mkt}
+                  key={marketplace}
                   onClick={() =>
                     setActiveMarketplace(
-                      mkt
+                      marketplace
                     )
                   }
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer ${
-                    activeMarketplace ===
-                    mkt
+                  className={`px-3 py-1 rounded-full text-xs ${
+                    activeMarketplace === marketplace
                       ? 'bg-blue-600 text-white'
-                      : 'text-gray-400 hover:text-white'
+                      : 'text-gray-400'
                   }`}
                 >
-                  {mkt}
+                  {marketplace}
                 </button>
               )
             )}
-
           </div>
-
         </div>
       </div>
 
-      {/* =====================================================
-          MAIN
-          ===================================================== */}
-
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 p-8 gap-6 overflow-hidden bg-gray-950">
 
-        {/* ===================================================
-            REVIEW LIST
-            =================================================== */}
-
         <div className="lg:col-span-2 space-y-4 overflow-y-auto pr-2 max-h-[calc(100vh-280px)]">
-
           {loading ? (
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-gray-400">
               Loading reviews...
             </div>
-          ) : filteredReviews.length ===
-            0 ? (
+          ) : filteredReviews.length === 0 ? (
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-gray-400">
               No reviews found for this filter.
             </div>
           ) : (
-            filteredReviews.map(
-              (
-                review
-              ) => {
-                const isSelected =
-                  selectedIds.includes(
-                    review.id
-                  );
+            filteredReviews.map((review) => {
+              const isSelected =
+                selectedIds.includes(review.id);
 
-                const replyCategory =
-                  getReplyCategory(
-                    review
-                  );
+              const isReplied =
+                review.status === 'REPLIED';
 
-                const isReplied =
-                  replyCategory ===
-                  'REPLIED';
-
-                return (
-                  <div
-                    key={
-                      review.id
-                    }
-                    onClick={() =>
-                      setSelectedReview(
-                        review
+              return (
+                <div
+                  key={review.id}
+                  onClick={() =>
+                    setSelectedReviewId(review.id)
+                  }
+                  className={`border rounded-xl p-5 cursor-pointer transition-all flex gap-4 items-start ${
+                    selectedReviewId === review.id
+                      ? 'border-blue-500 bg-gray-800'
+                      : 'bg-gray-900 border-gray-800 hover:border-gray-700'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    disabled={isReplied}
+                    onClick={(e) =>
+                      toggleSelectOne(
+                        review.id,
+                        e
                       )
                     }
-                    className={`border rounded-xl p-5 cursor-pointer transition-all shadow-sm flex gap-4 items-start ${
-                      selectedReview?.id ===
-                      review.id
-                        ? 'border-blue-500 bg-gray-800'
-                        : 'bg-gray-900 border-gray-800 hover:border-gray-700'
-                    }`}
-                  >
+                    onChange={() => {}}
+                    className="mt-1 w-4 h-4 rounded bg-gray-800 border-gray-700"
+                  />
 
-                    {/* =================================================
-                        REVIEW CHECKBOX
-                        ================================================= */}
+                  <div className="flex-1">
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="font-semibold text-white text-sm">
+                        {review.productName ||
+                          'Unknown Product'}
+                      </h3>
 
-                    <input
-                      type="checkbox"
-                      checked={
-                        isSelected
-                      }
-                      disabled={
-                        isReplied
-                      }
-                      onClick={(
-                        e
-                      ) =>
-                        toggleSelectOne(
-                          review.id,
-                          e
-                        )
-                      }
-                      onChange={() => {}}
-                      className="mt-1 rounded bg-gray-800 border-gray-700 text-blue-600 focus:ring-0 cursor-pointer w-4 h-4 disabled:opacity-30"
-                    />
-
-                    <div className="flex-1">
-
-                      <div className="flex justify-between items-start mb-2">
-
-                        <h3 className="font-semibold text-white text-sm">
-                          {review.productName ||
-                            'Unknown Product'}
-                        </h3>
-
-                        <div className="flex items-center gap-2">
-
-                          {/* REPLY STATUS */}
-
-                          {isReplied ? (
-                            <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium border border-emerald-500/20">
-                              REPLIED
-                            </span>
-                          ) : review.aiReply ? (
-                            <span className="text-xs px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 font-medium border border-purple-500/20">
-                              AI READY
-                            </span>
-                          ) : (
-                            <span className="text-xs px-2 py-0.5 rounded bg-gray-500/10 text-gray-400 font-medium border border-gray-500/20">
-                              NOT GENERATED
-                            </span>
-                          )}
-
-                          {!isReplied && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium border border-amber-500/20">
-                              {review.status}
-                            </span>
-                          )}
-
-                        </div>
-                      </div>
-
-                      <p className="text-xs text-gray-400 mb-2">
-                        {review.customerName}{' '}
-                        •{' '}
-                        {review.storeName}
-                      </p>
-
-                      <div className="text-amber-400 text-xs mb-3">
-
-                        {'★'.repeat(
-                          Math.max(
-                            0,
-                            Math.min(
-                              5,
-                              review.rating
-                            )
-                          )
+                      <div className="flex items-center gap-2">
+                        {isReplied ? (
+                          <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            REPLIED
+                          </span>
+                        ) : review.aiReply ? (
+                          <span className="text-xs px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                            AI READY
+                          </span>
+                        ) : (
+                          <span className="text-xs px-2 py-0.5 rounded bg-gray-500/10 text-gray-400 border border-gray-500/20">
+                            NOT GENERATED
+                          </span>
                         )}
 
-                        {'☆'.repeat(
-                          Math.max(
-                            0,
-                            5 -
-                              Math.max(
-                                0,
-                                Math.min(
-                                  5,
-                                  review.rating
-                                )
-                              )
-                          )
+                        {!isReplied && (
+                          <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            {review.status}
+                          </span>
                         )}
-
-                        <span className="text-gray-500 ml-2 font-mono uppercase">
-                          ({review.marketplace})
-                        </span>
                       </div>
-
-                      <p className="text-sm text-gray-300 italic">
-                        "{review.reviewText || ''}"
-                      </p>
-
                     </div>
+
+                    <p className="text-xs text-gray-400 mb-2">
+                      {review.customerName} •{' '}
+                      {review.storeName}
+                    </p>
+
+                    <div className="text-amber-400 text-xs mb-3">
+                      {'★'.repeat(
+                        Math.max(
+                          0,
+                          Math.min(5, review.rating)
+                        )
+                      )}
+                      {'☆'.repeat(
+                        Math.max(
+                          0,
+                          5 -
+                            Math.max(
+                              0,
+                              Math.min(
+                                5,
+                                review.rating
+                              )
+                            )
+                        )
+                      )}
+                      <span className="text-gray-500 ml-2 font-mono uppercase">
+                        ({review.marketplace})
+                      </span>
+                    </div>
+
+                    <p className="text-sm text-gray-300 italic">
+                      "{review.reviewText || ''}"
+                    </p>
                   </div>
-                );
-              }
-            )
+                </div>
+              );
+            })
           )}
         </div>
 
-        {/* ===================================================
-            NOVA AI PANEL
-            =================================================== */}
-
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex flex-col justify-between h-fit">
-
           <div>
-
             <div className="flex items-center justify-between mb-4">
               <span className="text-xs font-bold tracking-wider text-purple-400 uppercase">
                 ✦ NOVA AI REPLY GENERATOR
@@ -1601,25 +1057,22 @@ export default function ReviewsPage() {
             </div>
 
             <div className="mb-4">
-
               <p className="text-xs text-gray-400 uppercase font-semibold mb-2">
                 SELECTED REVIEW
               </p>
 
               <div className="bg-gray-950 border border-gray-800 rounded-lg p-3 text-xs text-gray-300">
-
                 {selectedReview ? (
                   <>
                     <p className="italic mb-1 font-medium text-white">
-                      "{selectedReview.reviewText || '[No written review]'}"
+                      "{selectedReview.reviewText ||
+                        '[No written review]'}"
                     </p>
 
                     <p className="text-gray-500">
-                      {selectedReview.customerName}{' '}
-                      •{' '}
+                      {selectedReview.customerName} •{' '}
                       {selectedReview.productName ||
-                        'Unknown Product'}{' '}
-                      •{' '}
+                        'Unknown Product'} •{' '}
                       {selectedReview.rating}★
                     </p>
 
@@ -1632,100 +1085,44 @@ export default function ReviewsPage() {
                     Select a review from the list to view options.
                   </p>
                 )}
-
               </div>
             </div>
 
             {selectedReview && (
               <div className="mb-4">
-
                 <p className="text-xs text-gray-400 uppercase font-semibold mb-2">
                   AI GENERATED REPLY
                 </p>
 
                 <textarea
                   readOnly
-                  rows={5}
+                  rows={6}
                   className="w-full bg-gray-950 border border-gray-800 rounded-lg p-3 text-xs text-gray-200 resize-none outline-none"
-                  value={
-                    selectedReview.aiReply ||
-                    ''
-                  }
+                  value={selectedReview.aiReply || ''}
                   placeholder="No AI reply generated yet."
                 />
 
+                {selectedReview.aiReply && (
+                  <div className="mt-2 text-[11px] text-emerald-400">
+                    ✓ AI reply loaded from database
+                  </div>
+                )}
               </div>
             )}
-
           </div>
-
-          {/* =====================================================
-              SINGLE REVIEW REPLY
-              ===================================================== */}
 
           {selectedReview && (
             <div className="space-y-3 mt-4">
-
-              {/* GENERATE SINGLE */}
-
               {!selectedReview.aiReply &&
-                selectedReview.status !==
-                  'REPLIED' && (
+                selectedReview.status !== 'REPLIED' && (
                   <button
-                    onClick={() => {
-                      setSelectedIds([
-                        selectedReview.id,
-                      ]);
-
-                      // Generate only this review.
-                      setGenerating(
-                        true
-                      );
-
-                      generateReviewBatches(
-                        [
-                          selectedReview.id,
-                        ],
-                        'selected'
-                      )
-                        .then(
-                          (result) => {
-                            alert(
-                              `Generated ${result.totalGenerated} AI reply${
-                                result.totalFailed
-                                  ? `, ${result.totalFailed} failed`
-                                  : ''
-                              }.`
-                            );
-                          }
-                        )
-                        .catch(
-                          (err) => {
-                            console.error(
-                              err
-                            );
-                            alert(
-                              'Failed to generate reply.'
-                            );
-                          }
-                        )
-                        .finally(
-                          () => {
-                            setGenerating(
-                              false
-                            );
-                            setGenerateProgress(
-                              ''
-                            );
-                          }
-                        );
-                    }}
+                    onClick={handleGenerateSingle}
                     disabled={
                       generating ||
                       syncing ||
                       posting
                     }
-                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-colors shadow-lg cursor-pointer disabled:opacity-50"
+                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg disabled:opacity-50"
                   >
                     {generating
                       ? 'Generating...'
@@ -1733,41 +1130,36 @@ export default function ReviewsPage() {
                   </button>
                 )}
 
-              {/* REPLY */}
-
-              {selectedReview.status !==
-                'REPLIED' && (
+              {selectedReview.status !== 'REPLIED' && (
                 <button
                   onClick={() =>
-                    handleReplySelected(
-                      [
-                        selectedReview.id,
-                      ]
-                    )
+                    handleReplySelected([
+                      selectedReview.id,
+                    ])
                   }
                   disabled={
                     posting ||
                     syncing ||
-                    generating
+                    generating ||
+                    !selectedReview.aiReply
                   }
-                  className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors shadow-lg cursor-pointer disabled:opacity-50"
+                  className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg disabled:opacity-50"
                 >
                   {posting
                     ? 'Posting...'
-                    : 'Approve & Reply (Reply Comment API)'}
+                    : selectedReview.aiReply
+                    ? 'Approve & Reply (Reply Comment API)'
+                    : 'Generate Reply First'}
                 </button>
               )}
 
-              {selectedReview.status ===
-                'REPLIED' && (
+              {selectedReview.status === 'REPLIED' && (
                 <div className="w-full py-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold rounded-lg text-center">
                   ✓ Already Replied
                 </div>
               )}
-
             </div>
           )}
-
         </div>
       </div>
     </div>
