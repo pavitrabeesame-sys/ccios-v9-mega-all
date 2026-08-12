@@ -137,46 +137,179 @@ function isRegenerationCandidate(review) {
 // ============================================================
 
 function buildPrompt(review) {
-  const textContent =
-    review.reviewText?.trim() || '';
+  const reviewText = (review.reviewText || '').trim();
+  const rating = Number(review.rating) || 5;
 
-  const rating =
-    Number(review.rating) || 5;
+  const rawBrand = (review.brand || review.storeName || '').trim();
 
+  const brandAliases = {
+    'RAV': 'RAV Design',
+    'RAV DESIGN': 'RAV Design',
+
+    'NICOLE': 'Nicole Collection',
+    'NICOLE COLLECTION': 'Nicole Collection',
+
+    'HUSH PUPPIES': 'Hush Puppies Accessories',
+    'HUSH PUPPIES ACCESSORIES': 'Hush Puppies Accessories',
+
+    'OBERMAIN': 'Obermain Accessories Official Store',
+    'OBERMAIN ACCESSORIES OFFICIAL STORE': 'Obermain Accessories Official Store',
+
+    'JOHN LANGFORD': 'JOHN LANGFORD OF LONDON',
+    'JOHN LANGFORD OF LONDON': 'JOHN LANGFORD OF LONDON',
+  };
+
+  const brandKey = rawBrand.toUpperCase();
   const brandName =
-    review.brand?.trim() || 'our store';
+    brandAliases[brandKey] ||
+    rawBrand ||
+    'Our Store';
 
-  const reviewDisplay =
-    textContent
-      ? `"${textContent}"`
-      : '[No written review provided]';
+  const brandVoice = {
+    'RAV Design': `
+Premium, rugged, confident and sophisticated.
+Focus on quality, craftsmanship, durability and practical everyday style.
+Use confident professional language.
+Never sound cute, overly casual or overly emotional.
+`,
+
+    'Nicole Collection': `
+Elegant, feminine, modern and refined.
+Focus on flattering style, elegance, quality and effortless fashion.
+Use warm but polished language.
+Never sound overly masculine, rugged or corporate.
+`,
+
+    'Hush Puppies Accessories': `
+Friendly, trustworthy and professional.
+Focus on comfort, quality, thoughtful design and everyday usability.
+Sound warm and approachable while remaining polished.
+`,
+
+    'Obermain Accessories Official Store': `
+Premium, refined and practical.
+Focus on craftsmanship, quality, sophisticated design and everyday functionality.
+Use mature, polished and professional language.
+`,
+
+    'JOHN LANGFORD OF LONDON': `
+Classic, distinguished, formal and sophisticated.
+Focus on timeless style, refinement, craftsmanship and quality.
+Use elegant professional language.
+Avoid casual, cute or overly enthusiastic expressions.
+`,
+  }[brandName] || `
+Professional, warm and brand-appropriate.
+`;
+
+  const hasComment = Boolean(reviewText);
+
+  const reviewDisplay = hasComment
+    ? `"${reviewText}"`
+    : '[NO WRITTEN COMMENT]';
+
+  let actionRule;
+
+  if (rating >= 5 && !hasComment) {
+    actionRule = `
+5-STAR WITH NO COMMENT:
+Use a concise professional appreciation reply.
+Do NOT invent what the customer liked.
+`;
+  } else if (rating === 4 && !hasComment) {
+    actionRule = `
+4-STAR WITH NO COMMENT:
+Thank the customer for the rating and support.
+Do not imply that anything went wrong.
+Leave a positive opening for future service.
+`;
+  } else if (rating === 3 && !hasComment) {
+    actionRule = `
+3-STAR WITH NO COMMENT:
+Remain neutral and professional.
+Thank the customer for taking the time to rate the store.
+Do not assume dissatisfaction or invent a problem.
+`;
+  } else if (rating === 2 && !hasComment) {
+    actionRule = `
+2-STAR WITH NO COMMENT:
+Be polite and mildly apologetic.
+Acknowledge that the experience may not have met expectations.
+Do not guess what the problem was.
+Invite the customer to contact the store if assistance is needed.
+`;
+  } else if (rating <= 1 && !hasComment) {
+    actionRule = `
+1-STAR WITH NO COMMENT:
+Be professional, respectful and apologetic.
+Do not guess what went wrong.
+Invite the customer to contact the store for assistance.
+`;
+  } else if (rating >= 4 && hasComment) {
+    actionRule = `
+POSITIVE REVIEW WITH COMMENT:
+Read the customer's actual words carefully.
+Identify the specific things they mentioned positively.
+Thank them and directly acknowledge those points.
+Do NOT fall back to a generic star-only reply.
+`;
+  } else {
+    actionRule = `
+REVIEW WITH COMMENT AND RATING 1-3:
+This review requires careful handling.
+Acknowledge the customer's actual concern.
+Do not argue, become defensive or invent facts.
+Do not promise compensation, replacement, refund or policy exceptions.
+`;
+  }
 
   return `
-Write a short official customer-service reply for ${brandName}.
+You are the official customer-service representative for:
 
-Customer rating: ${rating}/5
+${brandName}
 
-Customer review:
+BRAND VOICE:
+${brandVoice}
+
+CUSTOMER RATING:
+${rating}/5
+
+CUSTOMER REVIEW:
 ${reviewDisplay}
 
-Rules:
-- Respond to the customer's actual review.
-- Be warm, natural, human and concise.
-- Match the customer's language when appropriate.
-- For positive reviews, thank them and mention their specific feedback when possible.
-- For negative reviews, acknowledge the actual concern and be empathetic.
-- If there is no written review, only thank them for the rating.
-- Never invent product details, orders, policies, warranties, refunds, replacements, compensation, discounts, delivery promises or future commitments.
-- Never promise that suggestions will be implemented.
-- Never claim the customer experienced something not stated.
-- Never mention AI, prompts, models, automation or internal systems.
-- Never use placeholders or square-bracket variables.
-- Do not add explanations or labels.
-- Return ONLY the customer reply.
+RESPONSE RULE:
+${actionRule}
 
-If a sign-off is appropriate:
-Best regards,
-Customer Service Team
+LANGUAGE:
+Reply in the same language used by the customer.
+For Malaysian Malay, use natural Malaysian Malay.
+For Chinese, use natural Simplified Chinese suitable for Malaysian customers.
+Do not translate unnaturally or use literal machine-translation phrasing.
+
+PRODUCT CONTEXT:
+Product information may only be used when supplied by the system.
+Never invent material, specifications, features, warranty, delivery promises, refund policy, replacement policy or other product information.
+
+IMPORTANT:
+- Start the reply with the exact brand name:
+  ${brandName}
+- No emojis.
+- No hashtags.
+- No markdown.
+- No bullet points.
+- No quotation marks around the reply.
+- Do not mention AI, automation, prompts or models.
+- Do not use placeholders.
+- Do not invent customer experiences.
+- Do not invent product facts.
+- Do not claim a problem that the customer did not mention.
+- Do not promise anything the business cannot verify.
+- Keep the reply concise and natural.
+- Avoid repeating the same wording across brands.
+- Avoid generic copy-paste language.
+- The reply must sound like ${brandName}, not a generic marketplace seller.
+
+Return ONLY the final customer reply.
 `.trim();
 }
 
