@@ -9,26 +9,16 @@ export const maxDuration = 60;
 // CONFIGURATION
 // ============================================================
 
-// Small delay between successful AI requests.
-// This helps avoid hammering Groq during bulk generation.
-const REQUEST_DELAY_MS = 1000;
-
-// Only retry transient errors.
-// IMPORTANT:
-// Daily token quota errors are NEVER retried.
+const REQUEST_DELAY_MS = 500;
 const MAX_RETRIES = 1;
-
-// Delay for normal transient retry.
-const RETRY_BASE_DELAY_MS = 3000;
+const RETRY_BASE_DELAY_MS = 2000;
 
 // ============================================================
 // HELPERS
 // ============================================================
 
 const delay = (ms) =>
-  new Promise((resolve) =>
-    setTimeout(resolve, ms)
-  );
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 // ============================================================
 // PLACEHOLDER DETECTION
@@ -51,146 +41,13 @@ function hasPlaceholder(text) {
     return false;
   }
 
-  return PLACEHOLDER_PATTERNS.some(
-    (pattern) =>
-      pattern.test(text)
+  return PLACEHOLDER_PATTERNS.some((pattern) =>
+    pattern.test(text)
   );
 }
 
 // ============================================================
-// RATE LIMIT DETECTION
-// ============================================================
-
-function isRateLimitError(error) {
-  if (!error) {
-    return false;
-  }
-
-  const raw =
-    typeof error === 'string'
-      ? error
-      : JSON.stringify(error);
-
-  const text =
-    raw.toLowerCase();
-
-  return (
-    text.includes(
-      'rate_limit_exceeded'
-    ) ||
-    text.includes(
-      'rate limit reached'
-    ) ||
-    text.includes(
-      'rate limit'
-    ) ||
-    text.includes(
-      'tokens per day'
-    ) ||
-    text.includes(
-      'tpd'
-    ) ||
-    text.includes(
-      'too many requests'
-    ) ||
-    text.includes(
-      '429'
-    )
-  );
-}
-
-// ============================================================
-// DAILY TOKEN QUOTA DETECTION
-// ============================================================
-
-function isDailyTokenLimit(error) {
-  if (!error) {
-    return false;
-  }
-
-  const raw =
-    typeof error === 'string'
-      ? error
-      : JSON.stringify(error);
-
-  const text =
-    raw.toLowerCase();
-
-  return (
-    text.includes(
-      'tokens per day'
-    ) ||
-    text.includes(
-      'tpd'
-    ) ||
-    text.includes(
-      'daily token'
-    ) ||
-    text.includes(
-      'limit 100000'
-    )
-  );
-}
-
-// ============================================================
-// RETRYABLE ERROR DETECTION
-// ============================================================
-
-function isRetryableError(error) {
-  if (!error) {
-    return false;
-  }
-
-  // NEVER retry daily token exhaustion.
-  if (
-    isDailyTokenLimit(error)
-  ) {
-    return false;
-  }
-
-  // NEVER retry generic rate-limit errors
-  // from the daily quota path.
-  if (
-    isRateLimitError(error)
-  ) {
-    return false;
-  }
-
-  const raw =
-    typeof error === 'string'
-      ? error
-      : JSON.stringify(error);
-
-  const text =
-    raw.toLowerCase();
-
-  return (
-    text.includes(
-      'timeout'
-    ) ||
-    text.includes(
-      'timed out'
-    ) ||
-    text.includes(
-      'network'
-    ) ||
-    text.includes(
-      'fetch failed'
-    ) ||
-    text.includes(
-      '502'
-    ) ||
-    text.includes(
-      '503'
-    ) ||
-    text.includes(
-      '504'
-    )
-  );
-}
-
-// ============================================================
-// SAFE ERROR STRING
+// ERROR HELPERS
 // ============================================================
 
 function getErrorMessage(error) {
@@ -198,62 +55,80 @@ function getErrorMessage(error) {
     return 'Unknown error';
   }
 
-  if (
-    typeof error === 'string'
-  ) {
+  if (typeof error === 'string') {
     return error;
   }
 
-  if (
-    error instanceof Error
-  ) {
+  if (error instanceof Error) {
     return error.message;
   }
 
   try {
-    return JSON.stringify(
-      error
-    );
+    return JSON.stringify(error);
   } catch {
     return String(error);
   }
+}
+
+function getErrorText(error) {
+  return getErrorMessage(error).toLowerCase();
+}
+
+function isRateLimitError(error) {
+  const text = getErrorText(error);
+
+  return (
+    text.includes('rate_limit_exceeded') ||
+    text.includes('rate limit') ||
+    text.includes('too many requests') ||
+    text.includes('tokens per day') ||
+    text.includes('daily token') ||
+    text.includes('tpd') ||
+    text.includes('429') ||
+    text.includes('quota')
+  );
+}
+
+function isRetryableError(error) {
+  const text = getErrorText(error);
+
+  if (isRateLimitError(error)) {
+    return false;
+  }
+
+  return (
+    text.includes('timeout') ||
+    text.includes('timed out') ||
+    text.includes('network') ||
+    text.includes('fetch failed') ||
+    text.includes('502') ||
+    text.includes('503') ||
+    text.includes('504')
+  );
 }
 
 // ============================================================
 // REVIEW ELIGIBILITY
 // ============================================================
 
-function isRegenerationCandidate(
-  review
-) {
+function isRegenerationCandidate(review) {
   if (!review) {
     return false;
   }
 
-  // Never regenerate a review that has already
+  // NEVER regenerate a review that has already
   // been posted/replied to.
-  if (
-    review.status ===
-    'REPLIED'
-  ) {
+  if (review.status === 'REPLIED') {
     return false;
   }
 
-  // Shopee review must have shopId.
-  if (
-    review.shopId === null ||
-    review.shopId === undefined
-  ) {
-    return false;
-  }
-
-  // Generate when there is no AI reply
-  // OR the existing reply contains a placeholder.
+  // Generate when:
+  // 1. No AI reply exists
+  // OR
+  // 2. Existing AI reply contains a placeholder
   return (
     !review.aiReply ||
-    hasPlaceholder(
-      review.aiReply
-    )
+    hasPlaceholder(review.aiReply)
   );
 }
 
@@ -263,37 +138,24 @@ function isRegenerationCandidate(
 
 function buildPrompt(review) {
   const textContent =
-    review.reviewText?.trim() ||
-    '';
+    review.reviewText?.trim() || '';
 
   const rating =
     Number(review.rating) || 5;
 
   const brandName =
-    review.brand?.trim() ||
-    'our store';
+    review.brand?.trim() || 'our store';
 
   const reviewDisplay =
     textContent
       ? `"${textContent}"`
       : '[No written review provided]';
 
-  /*
-   * IMPORTANT:
-   *
-   * Keep this prompt intentionally compact.
-   *
-   * The previous prompt was around 650 input tokens
-   * before the model even generated the reply.
-   *
-   * Shortening the instructions significantly reduces
-   * Groq TPD consumption.
-   */
-
   return `
 Write a short official customer-service reply for ${brandName}.
 
 Customer rating: ${rating}/5
+
 Customer review:
 ${reviewDisplay}
 
@@ -319,12 +181,316 @@ Customer Service Team
 }
 
 // ============================================================
+// GEMINI
+// ============================================================
+
+async function askGemini(prompt) {
+  const apiKey =
+    process.env.GEMINI_API_KEY;
+
+  const model =
+    process.env.GEMINI_MODEL ||
+    'gemini-2.5-flash-lite';
+
+  if (
+    !apiKey ||
+    apiKey === 'YOUR_GEMINI_API_KEY'
+  ) {
+    throw new Error(
+      'Gemini API key is not configured.'
+    );
+  }
+
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const response =
+    await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type':
+          'application/json',
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [
+            {
+              text:
+                'You are a professional ecommerce customer service assistant. Return ONLY the final customer reply. Never explain your reasoning.',
+            },
+          ],
+        },
+
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: prompt,
+              },
+            ],
+          },
+        ],
+
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 200,
+        },
+      }),
+    });
+
+  if (!response.ok) {
+    const errorText =
+      await response.text();
+
+    throw new Error(
+      `Gemini ${response.status}: ${errorText}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  const text =
+    data?.candidates?.[0]?.content?.parts
+      ?.map((part) => part?.text || '')
+      .join('')
+      .trim();
+
+  if (!text) {
+    throw new Error(
+      'Gemini returned an empty response.'
+    );
+  }
+
+  return text;
+}
+
+// ============================================================
+// GROQ
+// ============================================================
+
+async function askGroqSafe(prompt) {
+  const apiKey =
+    process.env.GROQ_API_KEY;
+
+  if (
+    !apiKey ||
+    apiKey === 'YOUR_GROQ_API_KEY'
+  ) {
+    throw new Error(
+      'Groq API key is not configured.'
+    );
+  }
+
+  const model =
+    process.env.GROQ_MODEL ||
+    'llama-3.1-8b-instant';
+
+  console.log(
+    `[AI] Trying Groq model: ${model}`
+  );
+
+  const reply =
+    await askGroq(prompt);
+
+  if (
+    !reply ||
+    !reply.trim()
+  ) {
+    throw new Error(
+      'Groq returned an empty response.'
+    );
+  }
+
+  return reply.trim();
+}
+
+// ============================================================
+// OLLAMA
+// ============================================================
+
+async function askOllama(prompt) {
+  const apiUrl =
+    process.env.OLLAMA_API_URL ||
+    'http://127.0.0.1:11434/api/chat';
+
+  const model =
+    process.env.OLLAMA_MODEL ||
+    'qwen3:4b';
+
+  // If env accidentally points to /api/generate,
+  // normalize it to the chat endpoint.
+  const url =
+    apiUrl.replace(
+      /\/api\/generate\/?$/,
+      '/api/chat'
+    );
+
+  console.log(
+    `[AI] Trying Ollama model: ${model}`
+  );
+
+  const response =
+    await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type':
+          'application/json',
+      },
+      body: JSON.stringify({
+        model,
+
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a professional ecommerce customer service assistant. Return ONLY the final customer reply. Never explain your reasoning.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+
+        stream: false,
+
+        options: {
+          temperature: 0.3,
+        },
+      }),
+    });
+
+  if (!response.ok) {
+    const errorText =
+      await response.text();
+
+    throw new Error(
+      `Ollama ${response.status}: ${errorText}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  const text =
+    data?.message?.content?.trim();
+
+  if (!text) {
+    throw new Error(
+      'Ollama returned an empty response.'
+    );
+  }
+
+  return text;
+}
+
+// ============================================================
+// AI FALLBACK ENGINE
+//
+// Priority:
+// 1. Gemini
+// 2. Groq 8B
+// 3. Ollama
+// ============================================================
+
+async function generateWithFallback(
+  prompt
+) {
+  const providers = [
+    {
+      name: 'Gemini',
+      run: () =>
+        askGemini(prompt),
+    },
+
+    {
+      name: 'Groq',
+      run: () =>
+        askGroqSafe(prompt),
+    },
+
+    {
+      name: 'Ollama',
+      run: () =>
+        askOllama(prompt),
+    },
+  ];
+
+  const providerErrors = [];
+
+  for (
+    const provider of providers
+  ) {
+    try {
+      console.log(
+        `[AI] Trying ${provider.name}...`
+      );
+
+      const reply =
+        await provider.run();
+
+      if (
+        !reply ||
+        !reply.trim()
+      ) {
+        throw new Error(
+          `${provider.name} returned an empty reply.`
+        );
+      }
+
+      const cleaned =
+        reply.trim();
+
+      if (
+        hasPlaceholder(cleaned)
+      ) {
+        throw new Error(
+          `${provider.name} generated an unresolved placeholder.`
+        );
+      }
+
+      console.log(
+        `[AI] SUCCESS: ${provider.name}`
+      );
+
+      return {
+        reply: cleaned,
+        provider: provider.name,
+        errors: providerErrors,
+      };
+    } catch (error) {
+      const message =
+        getErrorMessage(error);
+
+      console.warn(
+        `[AI] ${provider.name} failed: ${message}`
+      );
+
+      providerErrors.push({
+        provider: provider.name,
+        error: message,
+      });
+
+      // IMPORTANT:
+      // Do NOT stop on rate limit.
+      // Immediately try the next provider.
+      continue;
+    }
+  }
+
+  throw new Error(
+    `All AI providers failed: ${JSON.stringify(
+      providerErrors
+    )}`
+  );
+}
+
+// ============================================================
 // POST /api/reviews/generate-all
 // ============================================================
 
-export async function POST(
-  req
-) {
+export async function POST(req) {
   try {
     // ========================================================
     // READ REQUEST
@@ -341,21 +507,10 @@ export async function POST(
         : [];
 
     const requestedLimit =
-      typeof body?.limit ===
-        'number' &&
+      typeof body?.limit === 'number' &&
       body.limit > 0
-        ? Math.floor(
-            body.limit
-          )
+        ? Math.floor(body.limit)
         : null;
-
-    // ========================================================
-    // IMPORTANT:
-    //
-    // If ids are supplied, ONLY those IDs may be processed.
-    //
-    // There is NO fallback to "all pending reviews".
-    // ========================================================
 
     const hasExplicitIds =
       ids.length > 0;
@@ -378,9 +533,7 @@ export async function POST(
       ids.length
     );
 
-    if (
-      hasExplicitIds
-    ) {
+    if (hasExplicitIds) {
       console.log(
         '[Bulk AI] IDs:',
         ids
@@ -393,33 +546,30 @@ export async function POST(
 
     let candidates = [];
 
-    if (
-      hasExplicitIds
-    ) {
+    if (hasExplicitIds) {
       // ------------------------------------------------------
       // SELECTED MODE
+      //
+      // IMPORTANT:
+      // shopId is NOT required here.
       // ------------------------------------------------------
 
-      // Remove duplicates while preserving order.
       const uniqueIds = [
         ...new Set(
           ids
             .filter(
               (id) =>
-                typeof id ===
-                  'string' &&
+                typeof id === 'string' &&
                 id.trim() !== ''
             )
-            .map(
-              (id) =>
-                id.trim()
+            .map((id) =>
+              id.trim()
             )
         ),
       ];
 
       if (
-        uniqueIds.length ===
-        0
+        uniqueIds.length === 0
       ) {
         return NextResponse.json({
           success: true,
@@ -432,24 +582,21 @@ export async function POST(
       }
 
       candidates =
-  await db.review.findMany({
-    where: {
-      id: {
-        in: uniqueIds,
-      },
+        await db.review.findMany({
+          where: {
+            id: {
+              in: uniqueIds,
+            },
 
-      // Selected reviews can be generated regardless
-      // of whether shopId is populated.
-      // shopId is NOT required for AI generation.
-      status: {
-        not: 'REPLIED',
-      },
-    },
+            status: {
+              not: 'REPLIED',
+            },
+          },
 
-    take:
-      requestedLimit ||
-      uniqueIds.length,
-  });
+          take:
+            requestedLimit ||
+            uniqueIds.length,
+        });
     } else {
       // ------------------------------------------------------
       // GENERATE-ALL MODE
@@ -481,7 +628,7 @@ export async function POST(
     }
 
     // ========================================================
-    // FILTER INVALID / ALREADY GENERATED REVIEWS
+    // FILTER REVIEWS
     // ========================================================
 
     const reviewsToProcess =
@@ -503,12 +650,10 @@ export async function POST(
     );
 
     // ========================================================
-    // NOTHING TO DO
+    // NOTHING TO GENERATE
     // ========================================================
 
-    if (
-      total === 0
-    ) {
+    if (total === 0) {
       console.log(
         '[Bulk AI] Nothing to generate.'
       );
@@ -519,10 +664,12 @@ export async function POST(
 
       return NextResponse.json({
         success: true,
+
         message:
           hasExplicitIds
             ? 'None of the selected reviews require AI generation or regeneration.'
             : 'No reviews require AI generation or regeneration.',
+
         generated: 0,
         failed: 0,
         total: 0,
@@ -533,19 +680,10 @@ export async function POST(
     // PROCESS
     // ========================================================
 
-    let generatedCount =
-      0;
-
-    let failedCount =
-      0;
+    let generatedCount = 0;
+    let failedCount = 0;
 
     const errors = [];
-
-    let rateLimited =
-      false;
-
-    let rateLimitMessage =
-      null;
 
     // ========================================================
     // SEQUENTIAL PROCESSING
@@ -554,11 +692,8 @@ export async function POST(
     for (
       const review of reviewsToProcess
     ) {
-      let success =
-        false;
-
-      let lastError =
-        null;
+      let success = false;
+      let lastError = null;
 
       // ------------------------------------------------------
       // ATTEMPTS
@@ -566,8 +701,7 @@ export async function POST(
 
       for (
         let attempt = 1;
-        attempt <=
-        MAX_RETRIES + 1;
+        attempt <= MAX_RETRIES + 1;
         attempt++
       ) {
         try {
@@ -576,38 +710,35 @@ export async function POST(
           );
 
           const prompt =
-            buildPrompt(
-              review
-            );
+            buildPrompt(review);
 
           // --------------------------------------------------
-          // CALL GROQ
+          // GEMINI → GROQ → OLLAMA
           // --------------------------------------------------
 
-          const aiReplyText =
-            await askGroq(
+          const result =
+            await generateWithFallback(
               prompt
             );
 
+          const cleanedReply =
+            result.reply;
+
+          const provider =
+            result.provider;
+
           // --------------------------------------------------
-          // EMPTY RESPONSE
+          // FINAL SAFETY
           // --------------------------------------------------
 
           if (
-            !aiReplyText ||
-            !aiReplyText.trim()
+            !cleanedReply ||
+            !cleanedReply.trim()
           ) {
             throw new Error(
               'Received empty response from AI service.'
             );
           }
-
-          const cleanedReply =
-            aiReplyText.trim();
-
-          // --------------------------------------------------
-          // PLACEHOLDER SAFETY
-          // --------------------------------------------------
 
           if (
             hasPlaceholder(
@@ -638,92 +769,34 @@ export async function POST(
           });
 
           console.log(
-            `[Bulk AI] Review ${review.id} generated successfully.`
+            `[Bulk AI] Review ${review.id} generated successfully using ${provider}.`
           );
 
-          success =
-            true;
+          success = true;
 
           break;
-        } catch (err) {
+        } catch (error) {
           lastError =
-            getErrorMessage(
-              err
-            );
+            getErrorMessage(error);
 
           console.warn(
-            `[Bulk AI] Review ID ${review.id} attempt ${attempt} failed: ${lastError}`
+            `[Bulk AI] Review ${review.id} attempt ${attempt} failed: ${lastError}`
           );
 
-          // ==================================================
-          // DAILY TOKEN LIMIT
-          // ==================================================
+          // --------------------------------------------------
+          // RETRY ONLY TEMPORARY ERRORS
+          // --------------------------------------------------
 
           if (
-            isDailyTokenLimit(
-              err
-            )
-          ) {
-            rateLimited =
-              true;
-
-            rateLimitMessage =
-              lastError;
-
-            console.error(
-              '[Bulk AI] GROQ DAILY TOKEN LIMIT REACHED.'
-            );
-
-            console.error(
-              '[Bulk AI] Stopping entire bulk operation immediately.'
-            );
-
-            break;
-          }
-
-          // ==================================================
-          // OTHER RATE LIMIT
-          // ==================================================
-
-          if (
-            isRateLimitError(
-              err
-            )
-          ) {
-            rateLimited =
-              true;
-
-            rateLimitMessage =
-              lastError;
-
-            console.error(
-              '[Bulk AI] GROQ RATE LIMIT REACHED.'
-            );
-
-            console.error(
-              '[Bulk AI] Stopping entire bulk operation immediately.'
-            );
-
-            break;
-          }
-
-          // ==================================================
-          // TRANSIENT ERROR
-          // ==================================================
-
-          if (
-            attempt <=
-              MAX_RETRIES &&
-            isRetryableError(
-              err
-            )
+            attempt <= MAX_RETRIES &&
+            isRetryableError(error)
           ) {
             const retryDelay =
               RETRY_BASE_DELAY_MS *
               attempt;
 
             console.log(
-              `[Bulk AI] Temporary error. Retrying review ${review.id} in ${retryDelay}ms.`
+              `[Bulk AI] Temporary error. Retrying in ${retryDelay}ms.`
             );
 
             await delay(
@@ -733,27 +806,22 @@ export async function POST(
             continue;
           }
 
-          // ==================================================
-          // NON-RETRYABLE ERROR
-          // ==================================================
-
           break;
         }
       }
 
       // ======================================================
-      // SUCCESS
+      // SUCCESS / FAILURE
       // ======================================================
 
-      if (
-        success
-      ) {
+      if (success) {
         generatedCount++;
       } else {
         failedCount++;
 
         errors.push({
           id: review.id,
+
           error:
             lastError ||
             'Unknown AI generation error.',
@@ -761,87 +829,11 @@ export async function POST(
       }
 
       // ======================================================
-      // STOP AFTER RATE LIMIT
-      // ======================================================
-
-      if (
-        rateLimited
-      ) {
-        break;
-      }
-
-      // ======================================================
-      // DELAY BETWEEN REVIEWS
+      // DELAY
       // ======================================================
 
       await delay(
         REQUEST_DELAY_MS
-      );
-    }
-
-    // ========================================================
-    // RATE LIMITED RESPONSE
-    // ========================================================
-
-    if (
-      rateLimited
-    ) {
-      const processed =
-        generatedCount +
-        failedCount;
-
-      const remaining =
-        Math.max(
-          0,
-          total -
-            processed
-        );
-
-      const friendlyMessage =
-        'Groq AI rate limit reached. ' +
-        `Generated ${generatedCount} review(s) before the limit. ` +
-        `${remaining} review(s) were not processed. ` +
-        'Please wait for the Groq limit to reset before trying again.';
-
-      console.warn(
-        '[Bulk AI]',
-        friendlyMessage
-      );
-
-      console.log(
-        '================================================'
-      );
-
-      return NextResponse.json(
-        {
-          success: false,
-
-          rateLimited: true,
-
-          generated:
-            generatedCount,
-
-          failed:
-            failedCount,
-
-          total,
-
-          remaining,
-
-          message:
-            friendlyMessage,
-
-          rateLimitError:
-            rateLimitMessage,
-
-          errors:
-            errors.length > 0
-              ? errors
-              : undefined,
-        },
-        {
-          status: 429,
-        }
       );
     }
 
@@ -873,7 +865,8 @@ export async function POST(
     );
 
     return NextResponse.json({
-      success: true,
+      success:
+        failedCount === 0,
 
       generated:
         generatedCount,
@@ -897,58 +890,26 @@ export async function POST(
     });
   } catch (error) {
     // ========================================================
-    // TOP-LEVEL ERROR
+    // TOP LEVEL ERROR
     // ========================================================
 
     const message =
-      getErrorMessage(
-        error
-      );
+      getErrorMessage(error);
 
     console.error(
       '[Generate-All Top-Level Error]:',
       message
     );
 
-    // ========================================================
-    // TOP-LEVEL RATE LIMIT
-    // ========================================================
-
-    if (
-      isRateLimitError(
-        error
-      )
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-
-          rateLimited: true,
-
-          generated: 0,
-
-          failed: 0,
-
-          total: 0,
-
-          message:
-            'Groq AI rate limit reached. Please wait for the limit to reset before trying again.',
-
-          error: message,
-        },
-        {
-          status: 429,
-        }
-      );
-    }
-
-    // ========================================================
-    // GENERIC ERROR
-    // ========================================================
-
     return NextResponse.json(
       {
         success: false,
+
+        generated: 0,
+
+        failed: 0,
+
+        total: 0,
 
         error:
           message ||
@@ -960,4 +921,3 @@ export async function POST(
     );
   }
 }
-
