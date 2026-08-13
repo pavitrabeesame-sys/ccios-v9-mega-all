@@ -33,8 +33,6 @@ SHORT + NATURAL + EMOJI VERSION
    CONFIG
    ============================================================ */
 
-const MAX_API_RETRIES = 0;
-
 const MIN_WORDS = 8;
 const MAX_WORDS = 28;
 
@@ -98,60 +96,22 @@ function getErrorMessage(error) {
 }
 
 function getErrorText(error) {
-  return getErrorMessage(
-    error
-  ).toLowerCase();
+  return getErrorMessage(error).toLowerCase();
 }
 
 function isRateLimitError(error) {
-  const text =
-    getErrorText(error);
+  const text = getErrorText(error);
 
   return (
-    text.includes(
-      'rate_limit_exceeded'
-    ) ||
-    text.includes(
-      'rate limit'
-    ) ||
-    text.includes(
-      'too many requests'
-    ) ||
-    text.includes(
-      'tokens per day'
-    ) ||
-    text.includes(
-      'daily token'
-    ) ||
+    text.includes('rate_limit_exceeded') ||
+    text.includes('rate limit') ||
+    text.includes('too many requests') ||
+    text.includes('tokens per day') ||
+    text.includes('daily token') ||
     text.includes('tpd') ||
     text.includes('429') ||
     text.includes('quota') ||
-    text.includes(
-      'resource_exhausted'
-    )
-  );
-}
-
-function isRetryableError(error) {
-  const text =
-    getErrorText(error);
-
-  if (
-    isRateLimitError(error)
-  ) {
-    return false;
-  }
-
-  return (
-    text.includes('timeout') ||
-    text.includes('timed out') ||
-    text.includes('network') ||
-    text.includes(
-      'fetch failed'
-    ) ||
-    text.includes('502') ||
-    text.includes('503') ||
-    text.includes('504')
+    text.includes('resource_exhausted')
   );
 }
 
@@ -159,23 +119,15 @@ function isRetryableError(error) {
    BRAND NORMALIZATION
    ============================================================ */
 
-function normalizeBrand(
-  rawBrand
-) {
+function normalizeBrand(rawBrand) {
   const value =
-    String(
-      rawBrand || ''
-    ).trim();
+    String(rawBrand || '').trim();
 
   const aliases = {
     RAV: 'RAV Design',
+    'RAV DESIGN': 'RAV Design',
 
-    'RAV DESIGN':
-      'RAV Design',
-
-    NICOLE:
-      'Nicole Collection',
-
+    NICOLE: 'Nicole Collection',
     'NICOLE COLLECTION':
       'Nicole Collection',
 
@@ -185,8 +137,7 @@ function normalizeBrand(
     'HUSH PUPPIES ACCESSORIES':
       'Hush Puppies Accessories',
 
-    OBERMAIN:
-      'Obermain',
+    OBERMAIN: 'Obermain',
 
     'OBERMAIN ACCESSORIES OFFICIAL STORE':
       'Obermain',
@@ -199,9 +150,7 @@ function normalizeBrand(
   };
 
   return (
-    aliases[
-      value.toUpperCase()
-    ] ||
+    aliases[value.toUpperCase()] ||
     value ||
     'Our Store'
   );
@@ -211,9 +160,7 @@ function normalizeBrand(
    DEFAULT BRAND VOICES
    ============================================================ */
 
-function getDefaultBrandVoice(
-  brandName
-) {
+function getDefaultBrandVoice(brandName) {
   const voices = {
     'RAV Design':
       'Premium, rugged, sophisticated and adventurous. Focus on craftsmanship, durability, quality and timeless design.',
@@ -241,16 +188,12 @@ function getDefaultBrandVoice(
    LANGUAGE
    ============================================================ */
 
-function detectLanguage(
-  text
-) {
+function detectLanguage(text) {
   const value =
     String(text || '');
 
   if (
-    /[\u4e00-\u9fff]/.test(
-      value
-    )
+    /[\u4e00-\u9fff]/.test(value)
   ) {
     return 'Simplified Chinese';
   }
@@ -300,9 +243,8 @@ function filterRelevantKnowledge(
   }
 
   const text =
-    String(
-      reviewText || ''
-    ).toLowerCase();
+    String(reviewText || '')
+      .toLowerCase();
 
   const sections =
     String(knowledgeBase)
@@ -314,9 +256,7 @@ function filterRelevantKnowledge(
       .filter(Boolean);
 
   if (!sections.length) {
-    return String(
-      knowledgeBase
-    );
+    return String(knowledgeBase);
   }
 
   const keywords = [];
@@ -407,15 +347,13 @@ function filterRelevantKnowledge(
    NO COMMENT TEMPLATE
    ============================================================ */
 
-function getNoCommentTemplate(
-  rating
-) {
+function getNoCommentTemplate(rating) {
   if (rating >= 5) {
-    return 'Thank you so much for your 5-star rating and support! 😊 We truly appreciate you! ❤️';
+    return 'Thank you so much for your 5-star rating! 😊 We truly appreciate your support! ❤️';
   }
 
   if (rating === 4) {
-    return 'Thank you so much for your 4-star rating and support! 😊 We really appreciate it! ❤️';
+    return 'Thank you so much for your 4-star rating! 😊 We really appreciate your support! ❤️';
   }
 
   if (rating === 3) {
@@ -476,13 +414,9 @@ const STOP_WORDS =
    REVIEW TERMS
    ============================================================ */
 
-function extractReviewTerms(
-  reviewText
-) {
+function extractReviewTerms(reviewText) {
   const normalized =
-    String(
-      reviewText || ''
-    )
+    String(reviewText || '')
       .toLowerCase()
       .replace(
         /[^\p{L}\p{N}\s]/gu,
@@ -502,9 +436,7 @@ function extractReviewTerms(
     )
     .filter(
       (word) =>
-        !STOP_WORDS.has(
-          word
-        )
+        !STOP_WORDS.has(word)
     )
     .slice(0, 12);
 }
@@ -556,8 +488,7 @@ function isGenericRatingOnlyReply(
     );
 
   for (
-    const pattern of
-      genericPatterns
+    const pattern of genericPatterns
   ) {
     const patternCompact =
       pattern
@@ -632,9 +563,7 @@ function validateReviewSpecificity(
   const matchedTerms =
     reviewTerms.filter(
       (term) =>
-        replyLower.includes(
-          term
-        )
+        replyLower.includes(term)
     );
 
   const requiredMatches =
@@ -664,13 +593,9 @@ function validateReviewSpecificity(
    CLEAN
    ============================================================ */
 
-function cleanReply(
-  text
-) {
+function cleanReply(text) {
   let cleaned =
-    String(
-      text || ''
-    ).trim();
+    String(text || '').trim();
 
   cleaned =
     cleaned
@@ -709,17 +634,13 @@ function cleanReply(
    EMOJI
    ============================================================ */
 
-function containsEmoji(
-  text
-) {
+function containsEmoji(text) {
   return /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(
     text
   );
 }
 
-function countEmojis(
-  text
-) {
+function countEmojis(text) {
   const matches =
     text.match(
       /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu
@@ -821,9 +742,7 @@ function validateReply(
     );
 
   if (
-    brandHeaderRegex.test(
-      cleaned
-    )
+    brandHeaderRegex.test(cleaned)
   ) {
     return {
       valid: false,
@@ -832,16 +751,22 @@ function validateReply(
     };
   }
 
+  /*
+   * AUTOMATIC PUNCTUATION
+   *
+   * IMPORTANT:
+   * Do NOT reject replies just because Gemini/Groq
+   * forgot the final punctuation.
+   */
+
+  let finalReply = cleaned;
+
   if (
     !/[.!?。！？]$/.test(
-      cleaned
+      finalReply
     )
   ) {
-    return {
-      valid: false,
-      reason:
-        'Missing terminal punctuation.',
-    };
+    finalReply += '.';
   }
 
   const language =
@@ -850,7 +775,7 @@ function validateReply(
     );
 
   const wordCount =
-    cleaned
+    finalReply
       .split(/\s+/)
       .filter(Boolean)
       .length;
@@ -880,7 +805,7 @@ function validateReply(
   }
 
   const words =
-    cleaned
+    finalReply
       .toLowerCase()
       .replace(
         /[^\p{L}\p{N}\s]/gu,
@@ -918,9 +843,7 @@ function validateReply(
     ]);
 
   if (
-    forbiddenEndings.has(
-      lastWord
-    )
+    forbiddenEndings.has(lastWord)
   ) {
     return {
       valid: false,
@@ -931,7 +854,7 @@ function validateReply(
 
   const specificity =
     validateReviewSpecificity(
-      cleaned,
+      finalReply,
       review?.reviewText
     );
 
@@ -948,7 +871,7 @@ function validateReply(
   return {
     valid: true,
     cleanedReply:
-      cleaned,
+      finalReply,
     reason:
       specificity.reason,
   };
@@ -1012,9 +935,7 @@ async function loadBrandProfile(
   } catch (error) {
     console.warn(
       '[AI] Unable to load brand AI profile:',
-      getErrorMessage(
-        error
-      )
+      getErrorMessage(error)
     );
 
     cache.set(
@@ -1077,9 +998,7 @@ function buildPrompt(
     Array.isArray(
       aiProfile?.forbiddenWords
     )
-      ? aiProfile.forbiddenWords.join(
-          ', '
-        )
+      ? aiProfile.forbiddenWords.join(', ')
       : String(
           aiProfile?.forbiddenWords ||
             'None'
@@ -1110,15 +1029,13 @@ RULES:
 - No store-name header.
 - No quotation marks.
 - Complete sentences only.
-- End with proper punctuation.
 - Keep it short.
 - Do not be overly promotional.
 - Reply in ${language}.
+- Use approximately 8-20 words.
 
 Brand voice:
-${getDefaultBrandVoice(
-  brandName
-)}
+${getDefaultBrandVoice(brandName)}
 
 Tone:
 ${tone}
@@ -1162,9 +1079,7 @@ BRAND VOICE
 ============================================================
 
 Default Brand Voice:
-${getDefaultBrandVoice(
-  brandName
-)}
+${getDefaultBrandVoice(brandName)}
 
 Configured Tone:
 ${tone}
@@ -1230,9 +1145,9 @@ MANDATORY RULES
 
 16. No bullet points.
 
-17. Write ${MIN_WORDS}-${MAX_WORDS} words.
+17. Keep the reply SHORT: 8-28 words.
 
-18. Use 1-2 short natural sentences.
+18. Use only 1-2 short natural sentences.
 
 19. Every sentence must be complete.
 
@@ -1243,9 +1158,7 @@ MANDATORY RULES
 
 22. Do not explain reasoning.
 
-23. Keep the reply concise.
-
-24. Return ONLY the final reply.
+23. Return ONLY the final reply.
 
 ============================================================
 QUALITY CHECK
@@ -1256,13 +1169,13 @@ Before answering, silently verify:
 - Actual review addressed.
 - At least one meaningful review detail addressed.
 - Not a generic rating reply.
-- Complete sentences.
-- Correct length.
+- 8-28 words.
+- 1-2 short sentences.
 - 1-2 natural emojis.
 - No markdown.
 - No header.
 - No invented information.
-- Proper punctuation.
+- Complete natural sentence.
 
 ${
   isRetry
@@ -1279,7 +1192,9 @@ Directly address:
 
 "${reviewText}"
 
-Keep it short.
+Keep it SHORT.
+
+Use 8-28 words.
 
 Include 1-2 natural emojis.
 
@@ -1294,9 +1209,7 @@ Return ONLY the corrected customer reply.
    GEMINI
    ============================================================ */
 
-async function askGemini(
-  prompt
-) {
+async function askGemini(prompt) {
   const apiKey =
     process.env.GEMINI_API_KEY;
 
@@ -1318,9 +1231,7 @@ async function askGemini(
     'https://generativelanguage.googleapis.com/v1beta/models/' +
     model +
     ':generateContent?key=' +
-    encodeURIComponent(
-      apiKey
-    );
+    encodeURIComponent(apiKey);
 
   const response =
     await fetch(
@@ -1340,7 +1251,7 @@ async function askGemini(
                 text: `
 You are CCIOS Review Intelligence.
 
-Write real ecommerce customer review replies.
+Write short, natural ecommerce customer review replies.
 
 For written reviews:
 - Address the customer's actual words.
@@ -1349,7 +1260,9 @@ For written reviews:
 - No headings.
 - No markdown.
 - MUST include 1-2 natural emojis.
-- Keep replies short and natural.
+- Keep replies short.
+- 8-28 words.
+- 1-2 short sentences.
 - No explanations.
 - Complete sentences.
                 `.trim(),
@@ -1412,9 +1325,7 @@ For written reviews:
    GROQ
    ============================================================ */
 
-async function askGroqSafe(
-  prompt
-) {
+async function askGroqSafe(prompt) {
   const apiKey =
     process.env.GROQ_API_KEY;
 
@@ -1429,9 +1340,7 @@ async function askGroqSafe(
   }
 
   const reply =
-    await askGroq(
-      prompt
-    );
+    await askGroq(prompt);
 
   if (
     !reply ||
@@ -1461,7 +1370,7 @@ async function generateReviewReply(
     ).trim();
 
   /*
-   * BLANK REVIEW = INSTANT.
+   * BLANK REVIEW = INSTANT
    */
 
   if (!reviewText) {
@@ -1530,15 +1439,11 @@ async function generateReviewReply(
     } catch (error) {
       console.warn(
         '[AI] Gemini failed:',
-        getErrorMessage(
-          error
-        )
+        getErrorMessage(error)
       );
 
       if (
-        isRateLimitError(
-          error
-        )
+        isRateLimitError(error)
       ) {
         aiState.geminiQuotaExhausted =
           true;
@@ -1600,9 +1505,7 @@ async function generateReviewReply(
   } catch (error) {
     console.warn(
       '[AI] Groq failed:',
-      getErrorMessage(
-        error
-      )
+      getErrorMessage(error)
     );
 
     throw error;
@@ -1684,18 +1587,14 @@ async function processReview(
   } catch (error) {
     console.warn(
       `[Bulk AI] FAILED ${review?.id}:`,
-      getErrorMessage(
-        error
-      )
+      getErrorMessage(error)
     );
 
     return {
       success: false,
       id: review?.id,
       error:
-        getErrorMessage(
-          error
-        ),
+        getErrorMessage(error),
     };
   }
 }
@@ -1754,9 +1653,7 @@ async function processInBatches(
    POST
    ============================================================ */
 
-export async function POST(
-  req
-) {
+export async function POST(req) {
   try {
     let body = {};
 
@@ -1768,21 +1665,15 @@ export async function POST(
     }
 
     const ids =
-      Array.isArray(
-        body.ids
-      )
+      Array.isArray(body.ids)
         ? body.ids
         : [];
 
     const requestedLimit =
-      Number(
-        body.limit
-      ) || null;
+      Number(body.limit) || null;
 
     const regenerate =
-      Boolean(
-        body.regenerate
-      );
+      Boolean(body.regenerate);
 
     const hasExplicitIds =
       ids.length > 0;
@@ -1827,22 +1718,21 @@ export async function POST(
        ======================================================== */
 
     if (hasExplicitIds) {
-      const uniqueIds =
-        [
-          ...new Set(
-            ids
-              .filter(
-                (id) =>
-                  typeof id ===
-                    'string' &&
-                  id.trim() !== ''
-              )
-              .map(
-                (id) =>
-                  id.trim()
-              )
-          ),
-        ];
+      const uniqueIds = [
+        ...new Set(
+          ids
+            .filter(
+              (id) =>
+                typeof id ===
+                  'string' &&
+                id.trim() !== ''
+            )
+            .map(
+              (id) =>
+                id.trim()
+            )
+        ),
+      ];
 
       if (
         !uniqueIds.length
@@ -2012,9 +1902,7 @@ export async function POST(
   } catch (error) {
     console.error(
       '[Bulk AI] FATAL ERROR:',
-      getErrorMessage(
-        error
-      )
+      getErrorMessage(error)
     );
 
     return NextResponse.json(
@@ -2022,9 +1910,7 @@ export async function POST(
         success: false,
 
         error:
-          getErrorMessage(
-            error
-          ),
+          getErrorMessage(error),
       },
       {
         status: 500,
