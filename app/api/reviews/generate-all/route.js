@@ -5,26 +5,29 @@ import { askGroq } from '@/src/services/ai/GroqService';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-/**
- * ============================================================
- * CCIOS — MASTER REVIEW AI GENERATION ENGINE
- * ============================================================
- *
- * OPTIMIZED:
- *
- * 1. Gemini quota is remembered across requests.
- * 2. Once Gemini returns 429/quota, Gemini is skipped immediately.
- * 3. Groq becomes the immediate fallback.
- * 4. No unnecessary 700ms delay between reviews.
- * 5. Brand AI profiles are cached during the request.
- * 6. Reviews are processed in controlled parallel batches.
- * 7. Written reviews must address actual customer content.
- * 8. Blank reviews use instant rating templates.
- * 9. REPLIED reviews are never regenerated.
- * 10. Explicit generated IDs may be regenerated.
- *
- * ============================================================
- */
+/*
+============================================================
+CCIOS — MASTER REVIEW AI GENERATION ENGINE
+============================================================
+
+SHORT + NATURAL + EMOJI VERSION
+
+- 8–28 words
+- 1–2 natural emojis
+- 1–2 short sentences
+- Written reviews address actual customer content
+- No markdown
+- No headers
+- No hashtags
+- No generic rating-only replies
+- Gemini → Groq fallback
+- Gemini quota cooldown
+- Brand AI profiles
+- Controlled parallel processing
+- REPLIED reviews never regenerated
+
+============================================================
+*/
 
 /* ============================================================
    CONFIG
@@ -32,21 +35,12 @@ export const maxDuration = 60;
 
 const MAX_API_RETRIES = 0;
 
-const MIN_WORDS = 25;
-const MAX_WORDS = 75;
+const MIN_WORDS = 8;
+const MAX_WORDS = 28;
 
-/*
- * Once Gemini hits the free-tier quota, do not call Gemini
- * again for 24 hours on the same running server instance.
- */
 const GEMINI_QUOTA_COOLDOWN_MS =
   24 * 60 * 60 * 1000;
 
-/*
- * Controlled concurrency.
- *
- * 3 is fast without aggressively hammering Groq.
- */
 const CONCURRENCY = 3;
 
 /* ============================================================
@@ -59,15 +53,20 @@ const GLOBAL_STATE =
     quotaUntil: 0,
   };
 
-globalThis.__CCIOS_GEMINI_STATE__ = GLOBAL_STATE;
+globalThis.__CCIOS_GEMINI_STATE__ =
+  GLOBAL_STATE;
 
 function isGeminiQuotaBlocked() {
-  return Date.now() < GLOBAL_STATE.quotaUntil;
+  return (
+    Date.now() <
+    GLOBAL_STATE.quotaUntil
+  );
 }
 
 function blockGeminiQuota() {
   GLOBAL_STATE.quotaUntil =
-    Date.now() + GEMINI_QUOTA_COOLDOWN_MS;
+    Date.now() +
+    GEMINI_QUOTA_COOLDOWN_MS;
 
   console.warn(
     '[AI] Gemini quota blocked for 24 hours.'
@@ -79,7 +78,9 @@ function blockGeminiQuota() {
    ============================================================ */
 
 function getErrorMessage(error) {
-  if (!error) return 'Unknown error';
+  if (!error) {
+    return 'Unknown error';
+  }
 
   if (typeof error === 'string') {
     return error;
@@ -97,29 +98,47 @@ function getErrorMessage(error) {
 }
 
 function getErrorText(error) {
-  return getErrorMessage(error).toLowerCase();
+  return getErrorMessage(
+    error
+  ).toLowerCase();
 }
 
 function isRateLimitError(error) {
-  const text = getErrorText(error);
+  const text =
+    getErrorText(error);
 
   return (
-    text.includes('rate_limit_exceeded') ||
-    text.includes('rate limit') ||
-    text.includes('too many requests') ||
-    text.includes('tokens per day') ||
-    text.includes('daily token') ||
+    text.includes(
+      'rate_limit_exceeded'
+    ) ||
+    text.includes(
+      'rate limit'
+    ) ||
+    text.includes(
+      'too many requests'
+    ) ||
+    text.includes(
+      'tokens per day'
+    ) ||
+    text.includes(
+      'daily token'
+    ) ||
     text.includes('tpd') ||
     text.includes('429') ||
     text.includes('quota') ||
-    text.includes('resource_exhausted')
+    text.includes(
+      'resource_exhausted'
+    )
   );
 }
 
 function isRetryableError(error) {
-  const text = getErrorText(error);
+  const text =
+    getErrorText(error);
 
-  if (isRateLimitError(error)) {
+  if (
+    isRateLimitError(error)
+  ) {
     return false;
   }
 
@@ -127,7 +146,9 @@ function isRetryableError(error) {
     text.includes('timeout') ||
     text.includes('timed out') ||
     text.includes('network') ||
-    text.includes('fetch failed') ||
+    text.includes(
+      'fetch failed'
+    ) ||
     text.includes('502') ||
     text.includes('503') ||
     text.includes('504')
@@ -138,21 +159,35 @@ function isRetryableError(error) {
    BRAND NORMALIZATION
    ============================================================ */
 
-function normalizeBrand(rawBrand) {
-  const value = String(rawBrand || '').trim();
+function normalizeBrand(
+  rawBrand
+) {
+  const value =
+    String(
+      rawBrand || ''
+    ).trim();
 
   const aliases = {
     RAV: 'RAV Design',
-    'RAV DESIGN': 'RAV Design',
 
-    NICOLE: 'Nicole Collection',
-    'NICOLE COLLECTION': 'Nicole Collection',
+    'RAV DESIGN':
+      'RAV Design',
 
-    'HUSH PUPPIES': 'Hush Puppies Accessories',
+    NICOLE:
+      'Nicole Collection',
+
+    'NICOLE COLLECTION':
+      'Nicole Collection',
+
+    'HUSH PUPPIES':
+      'Hush Puppies Accessories',
+
     'HUSH PUPPIES ACCESSORIES':
       'Hush Puppies Accessories',
 
-    OBERMAIN: 'Obermain',
+    OBERMAIN:
+      'Obermain',
+
     'OBERMAIN ACCESSORIES OFFICIAL STORE':
       'Obermain',
 
@@ -164,7 +199,9 @@ function normalizeBrand(rawBrand) {
   };
 
   return (
-    aliases[value.toUpperCase()] ||
+    aliases[
+      value.toUpperCase()
+    ] ||
     value ||
     'Our Store'
   );
@@ -174,7 +211,9 @@ function normalizeBrand(rawBrand) {
    DEFAULT BRAND VOICES
    ============================================================ */
 
-function getDefaultBrandVoice(brandName) {
+function getDefaultBrandVoice(
+  brandName
+) {
   const voices = {
     'RAV Design':
       'Premium, rugged, sophisticated and adventurous. Focus on craftsmanship, durability, quality and timeless design.',
@@ -202,10 +241,17 @@ function getDefaultBrandVoice(brandName) {
    LANGUAGE
    ============================================================ */
 
-function detectLanguage(text) {
-  const value = String(text || '');
+function detectLanguage(
+  text
+) {
+  const value =
+    String(text || '');
 
-  if (/[\u4e00-\u9fff]/.test(value)) {
+  if (
+    /[\u4e00-\u9fff]/.test(
+      value
+    )
+  ) {
     return 'Simplified Chinese';
   }
 
@@ -225,11 +271,14 @@ function detectLanguage(text) {
     'boleh',
   ];
 
-  const lower = value.toLowerCase();
+  const lower =
+    value.toLowerCase();
 
-  const matches = malayWords.filter((word) =>
-    lower.includes(word)
-  ).length;
+  const matches =
+    malayWords.filter(
+      (word) =>
+        lower.includes(word)
+    ).length;
 
   if (matches >= 1) {
     return 'Malaysian Malay';
@@ -250,17 +299,24 @@ function filterRelevantKnowledge(
     return 'No additional knowledge base information provided.';
   }
 
-  const text = String(
-    reviewText || ''
-  ).toLowerCase();
+  const text =
+    String(
+      reviewText || ''
+    ).toLowerCase();
 
-  const sections = String(knowledgeBase)
-    .split('===')
-    .map((section) => section.trim())
-    .filter(Boolean);
+  const sections =
+    String(knowledgeBase)
+      .split('===')
+      .map(
+        (section) =>
+          section.trim()
+      )
+      .filter(Boolean);
 
   if (!sections.length) {
-    return String(knowledgeBase);
+    return String(
+      knowledgeBase
+    );
   }
 
   const keywords = [];
@@ -325,16 +381,20 @@ function filterRelevantKnowledge(
       .join('\n===\n');
   }
 
-  const matched = sections.filter(
-    (section) => {
-      const lowerSection =
-        section.toLowerCase();
+  const matched =
+    sections.filter(
+      (section) => {
+        const lowerSection =
+          section.toLowerCase();
 
-      return keywords.some((keyword) =>
-        lowerSection.includes(keyword)
-      );
-    }
-  );
+        return keywords.some(
+          (keyword) =>
+            lowerSection.includes(
+              keyword
+            )
+        );
+      }
+    );
 
   return matched.length
     ? matched.join('\n===\n')
@@ -347,101 +407,104 @@ function filterRelevantKnowledge(
    NO COMMENT TEMPLATE
    ============================================================ */
 
-function getNoCommentTemplate(rating) {
+function getNoCommentTemplate(
+  rating
+) {
   if (rating >= 5) {
-    return (
-      'Thank you so much for your 5-star rating and support! ' +
-      'We truly appreciate your trust in our store and hope you continue to enjoy your purchase.'
-    );
+    return 'Thank you so much for your 5-star rating and support! 😊 We truly appreciate you! ❤️';
   }
 
   if (rating === 4) {
-    return (
-      'Thank you so much for your 4-star rating and support! ' +
-      'We are pleased to know you had a positive experience and look forward to serving you again.'
-    );
+    return 'Thank you so much for your 4-star rating and support! 😊 We really appreciate it! ❤️';
   }
 
   if (rating === 3) {
-    return (
-      'Thank you for taking the time to leave us a rating. ' +
-      'We appreciate your feedback and support, and we hope to provide you with an even better experience next time.'
-    );
+    return 'Thank you for your rating and feedback! 😊 We appreciate your support and hope to serve you even better next time. ❤️';
   }
 
-  return (
-    'Thank you for your feedback. ' +
-    'We are sorry that your experience did not fully meet expectations, and we are always here to assist if you need any support.'
-  );
+  return 'Thank you for your feedback. 🙏 We are sorry your experience did not fully meet expectations and we are here to help. ❤️';
 }
 
 /* ============================================================
    STOP WORDS
    ============================================================ */
 
-const STOP_WORDS = new Set([
-  'the',
-  'and',
-  'for',
-  'with',
-  'that',
-  'this',
-  'very',
-  'good',
-  'great',
-  'nice',
-  'item',
-  'product',
-  'really',
-  'was',
-  'are',
-  'is',
-  'it',
-  'to',
-  'of',
-  'a',
-  'an',
-  'in',
-  'on',
-  'my',
-  'i',
-  'we',
-  'you',
-  'your',
-  'our',
-  'so',
-  'as',
-  'at',
-  'from',
-  'be',
-  'have',
-  'had',
-  'has',
-  'easy',
-  'quality',
-]);
+const STOP_WORDS =
+  new Set([
+    'the',
+    'and',
+    'for',
+    'with',
+    'that',
+    'this',
+    'very',
+    'good',
+    'great',
+    'nice',
+    'item',
+    'product',
+    'really',
+    'was',
+    'are',
+    'is',
+    'it',
+    'to',
+    'of',
+    'a',
+    'an',
+    'in',
+    'on',
+    'my',
+    'i',
+    'we',
+    'you',
+    'your',
+    'our',
+    'so',
+    'as',
+    'at',
+    'from',
+    'be',
+    'have',
+    'had',
+    'has',
+    'easy',
+    'quality',
+  ]);
 
 /* ============================================================
    REVIEW TERMS
    ============================================================ */
 
-function extractReviewTerms(reviewText) {
-  const normalized = String(
-    reviewText || ''
-  )
-    .toLowerCase()
-    .replace(
-      /[^\p{L}\p{N}\s]/gu,
-      ' '
-    );
+function extractReviewTerms(
+  reviewText
+) {
+  const normalized =
+    String(
+      reviewText || ''
+    )
+      .toLowerCase()
+      .replace(
+        /[^\p{L}\p{N}\s]/gu,
+        ' '
+      );
 
   return normalized
     .split(/\s+/)
-    .map((word) => word.trim())
+    .map(
+      (word) =>
+        word.trim()
+    )
     .filter(Boolean)
-    .filter((word) => word.length >= 4)
     .filter(
-      (word) => !STOP_WORDS.has(word)
+      (word) =>
+        word.length >= 4
+    )
+    .filter(
+      (word) =>
+        !STOP_WORDS.has(
+          word
+        )
     )
     .slice(0, 12);
 }
@@ -454,20 +517,25 @@ function isGenericRatingOnlyReply(
   reply,
   reviewText
 ) {
-  if (!reviewText || !reviewText.trim()) {
+  if (
+    !reviewText ||
+    !String(reviewText).trim()
+  ) {
     return false;
   }
 
-  const normalized = String(
-    reply || ''
-  )
-    .toLowerCase()
-    .replace(
-      /[^\p{L}\p{N}\s]/gu,
-      ' '
-    )
-    .replace(/\s+/g, ' ')
-    .trim();
+  const normalized =
+    String(reply || '')
+      .toLowerCase()
+      .replace(
+        /[^\p{L}\p{N}\s]/gu,
+        ' '
+      )
+      .replace(
+        /\s+/g,
+        ' '
+      )
+      .trim();
 
   const genericPatterns = [
     'thank you for your 5 star review',
@@ -482,10 +550,14 @@ function isGenericRatingOnlyReply(
   ];
 
   const compact =
-    normalized.replace(/\s+/g, '');
+    normalized.replace(
+      /\s+/g,
+      ''
+    );
 
   for (
-    const pattern of genericPatterns
+    const pattern of
+      genericPatterns
   ) {
     const patternCompact =
       pattern
@@ -493,11 +565,18 @@ function isGenericRatingOnlyReply(
           /[^\p{L}\p{N}]/gu,
           ''
         )
-        .replace(/\s+/g, '');
+        .replace(
+          /\s+/g,
+          ''
+        );
 
     if (
-      compact.includes(patternCompact) &&
-      normalized.split(/\s+/).length <= 15
+      compact.includes(
+        patternCompact
+      ) &&
+      normalized.split(
+        /\s+/
+      ).length <= 15
     ) {
       return true;
     }
@@ -510,7 +589,10 @@ function validateReviewSpecificity(
   reply,
   reviewText
 ) {
-  if (!reviewText || !reviewText.trim()) {
+  if (
+    !reviewText ||
+    !String(reviewText).trim()
+  ) {
     return {
       valid: true,
       reason:
@@ -532,7 +614,9 @@ function validateReviewSpecificity(
   }
 
   const reviewTerms =
-    extractReviewTerms(reviewText);
+    extractReviewTerms(
+      reviewText
+    );
 
   if (!reviewTerms.length) {
     return {
@@ -546,12 +630,17 @@ function validateReviewSpecificity(
     String(reply).toLowerCase();
 
   const matchedTerms =
-    reviewTerms.filter((term) =>
-      replyLower.includes(term)
+    reviewTerms.filter(
+      (term) =>
+        replyLower.includes(
+          term
+        )
     );
 
   const requiredMatches =
-    reviewTerms.length >= 5 ? 2 : 1;
+    reviewTerms.length >= 5
+      ? 2
+      : 1;
 
   if (
     matchedTerms.length <
@@ -575,39 +664,70 @@ function validateReviewSpecificity(
    CLEAN
    ============================================================ */
 
-function cleanReply(text) {
-  let cleaned = String(
-    text || ''
-  ).trim();
+function cleanReply(
+  text
+) {
+  let cleaned =
+    String(
+      text || ''
+    ).trim();
 
-  cleaned = cleaned
-    .replace(
-      /^```[\w-]*\s*/i,
-      ''
-    )
-    .replace(
-      /\s*```$/i,
-      ''
-    )
-    .trim();
+  cleaned =
+    cleaned
+      .replace(
+        /^```\s*/i,
+        ''
+      )
+      .replace(
+        /\s*```$/i,
+        ''
+      )
+      .trim();
 
-  cleaned = cleaned
-    .replace(
-      /^["“”']+/,
-      ''
-    )
-    .replace(
-      /["“”']+$/,
-      ''
-    )
-    .trim();
+  cleaned =
+    cleaned
+      .replace(
+        /^["“”']+/,
+        ''
+      )
+      .replace(
+        /["“”']+$/,
+        ''
+      )
+      .trim();
 
-  cleaned = cleaned.replace(
-    /^(reply|response|customer reply|ai reply)\s*:\s*/i,
-    ''
-  );
+  cleaned =
+    cleaned.replace(
+      /^(reply|response|customer reply|ai reply)\s*:\s*/i,
+      ''
+    );
 
   return cleaned.trim();
+}
+
+/* ============================================================
+   EMOJI
+   ============================================================ */
+
+function containsEmoji(
+  text
+) {
+  return /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(
+    text
+  );
+}
+
+function countEmojis(
+  text
+) {
+  const matches =
+    text.match(
+      /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu
+    );
+
+  return matches
+    ? matches.length
+    : 0;
 }
 
 /* ============================================================
@@ -624,7 +744,8 @@ function validateReply(
   ) {
     return {
       valid: false,
-      reason: 'Empty AI response.',
+      reason:
+        'Empty AI response.',
     };
   }
 
@@ -651,22 +772,38 @@ function validateReply(
     };
   }
 
+  /*
+   * EMOJI REQUIRED
+   */
+
   if (
-    /[\u{1F300}-\u{1FAFF}]/u.test(
-      cleaned
-    )
+    !containsEmoji(cleaned)
   ) {
     return {
       valid: false,
       reason:
-        'Emoji detected.',
+        'Reply must contain at least one emoji.',
+    };
+  }
+
+  /*
+   * MAXIMUM 2 EMOJIS
+   */
+
+  if (
+    countEmojis(cleaned) > 2
+  ) {
+    return {
+      valid: false,
+      reason:
+        'Reply contains more than 2 emojis.',
     };
   }
 
   const brandName =
     normalizeBrand(
-      review.brand ||
-        review.storeName
+      review?.brand ||
+        review?.storeName
     );
 
   const escapedBrand =
@@ -684,7 +821,9 @@ function validateReply(
     );
 
   if (
-    brandHeaderRegex.test(cleaned)
+    brandHeaderRegex.test(
+      cleaned
+    )
   ) {
     return {
       valid: false,
@@ -694,7 +833,9 @@ function validateReply(
   }
 
   if (
-    !/[.!?。！？]$/.test(cleaned)
+    !/[.!?。！？]$/.test(
+      cleaned
+    )
   ) {
     return {
       valid: false,
@@ -705,7 +846,7 @@ function validateReply(
 
   const language =
     detectLanguage(
-      review.reviewText
+      review?.reviewText
     );
 
   const wordCount =
@@ -738,17 +879,20 @@ function validateReply(
     };
   }
 
-  const words = cleaned
-    .toLowerCase()
-    .replace(
-      /[^\p{L}\p{N}\s]/gu,
-      ''
-    )
-    .split(/\s+/)
-    .filter(Boolean);
+  const words =
+    cleaned
+      .toLowerCase()
+      .replace(
+        /[^\p{L}\p{N}\s]/gu,
+        ''
+      )
+      .split(/\s+/)
+      .filter(Boolean);
 
   const lastWord =
-    words[words.length - 1];
+    words[
+      words.length - 1
+    ];
 
   const forbiddenEndings =
     new Set([
@@ -774,7 +918,9 @@ function validateReply(
     ]);
 
   if (
-    forbiddenEndings.has(lastWord)
+    forbiddenEndings.has(
+      lastWord
+    )
   ) {
     return {
       valid: false,
@@ -786,10 +932,12 @@ function validateReply(
   const specificity =
     validateReviewSpecificity(
       cleaned,
-      review.reviewText
+      review?.reviewText
     );
 
-  if (!specificity.valid) {
+  if (
+    !specificity.valid
+  ) {
     return {
       valid: false,
       reason:
@@ -799,7 +947,8 @@ function validateReply(
 
   return {
     valid: true,
-    cleanedReply: cleaned,
+    cleanedReply:
+      cleaned,
     reason:
       specificity.reason,
   };
@@ -814,8 +963,8 @@ async function loadBrandProfile(
   cache
 ) {
   const rawBrand =
-    review.brand ||
-    review.storeName ||
+    review?.brand ||
+    review?.storeName ||
     '';
 
   if (!rawBrand) {
@@ -830,7 +979,9 @@ async function loadBrandProfile(
   if (
     cache.has(cacheKey)
   ) {
-    return cache.get(cacheKey);
+    return cache.get(
+      cacheKey
+    );
   }
 
   try {
@@ -842,13 +993,15 @@ async function loadBrandProfile(
             mode: 'insensitive',
           },
         },
+
         include: {
           AIProfile: true,
         },
       });
 
     const profile =
-      brand?.AIProfile || null;
+      brand?.AIProfile ||
+      null;
 
     cache.set(
       cacheKey,
@@ -859,7 +1012,9 @@ async function loadBrandProfile(
   } catch (error) {
     console.warn(
       '[AI] Unable to load brand AI profile:',
-      getErrorMessage(error)
+      getErrorMessage(
+        error
+      )
     );
 
     cache.set(
@@ -882,20 +1037,25 @@ function buildPrompt(
 ) {
   const reviewText =
     String(
-      review.reviewText || ''
+      review?.reviewText ||
+        ''
     ).trim();
 
   const rating =
-    Number(review.rating) || 5;
+    Number(
+      review?.rating
+    ) || 5;
 
   const brandName =
     normalizeBrand(
-      review.brand ||
-        review.storeName
+      review?.brand ||
+        review?.storeName
     );
 
   const language =
-    detectLanguage(reviewText);
+    detectLanguage(
+      reviewText
+    );
 
   const tone =
     aiProfile?.tone ||
@@ -940,18 +1100,19 @@ The customer left NO written comment.
 
 Customer rating: ${rating}/5
 
-Return ONLY a natural customer-facing reply.
+Return ONLY a short natural customer-facing reply.
 
 RULES:
+- MUST include 1-2 natural emojis.
 - Do not invent product details.
 - Do not mention details the customer did not provide.
-- No emojis.
 - No markdown.
 - No store-name header.
 - No quotation marks.
 - Complete sentences only.
 - End with proper punctuation.
-- Keep it natural and not overly promotional.
+- Keep it short.
+- Do not be overly promotional.
 - Reply in ${language}.
 
 Brand voice:
@@ -1036,13 +1197,12 @@ MANDATORY RULES
 
 3. NEVER return a generic rating-only response.
 
-4. Mention or naturally address at least one
-   meaningful detail from the review.
+4. Mention or naturally address at least one meaningful
+   detail from the review.
 
-5. If the customer mentions quality, material,
-   design, comfort, fit, size, delivery, packaging,
-   usability, durability or another detail,
-   respond specifically to it.
+5. If the customer mentions quality, material, design,
+   comfort, fit, size, delivery, packaging, usability,
+   durability or another detail, respond specifically.
 
 6. Do not repeat the review word-for-word.
 
@@ -1062,7 +1222,7 @@ MANDATORY RULES
 
 12. No quotation marks.
 
-13. No emojis.
+13. MUST include 1-2 natural emojis.
 
 14. No hashtags.
 
@@ -1072,7 +1232,7 @@ MANDATORY RULES
 
 17. Write ${MIN_WORDS}-${MAX_WORDS} words.
 
-18. Use 2-3 natural sentences.
+18. Use 1-2 short natural sentences.
 
 19. Every sentence must be complete.
 
@@ -1083,7 +1243,9 @@ MANDATORY RULES
 
 22. Do not explain reasoning.
 
-23. Return ONLY the final reply.
+23. Keep the reply concise.
+
+24. Return ONLY the final reply.
 
 ============================================================
 QUALITY CHECK
@@ -1096,7 +1258,7 @@ Before answering, silently verify:
 - Not a generic rating reply.
 - Complete sentences.
 - Correct length.
-- No emoji.
+- 1-2 natural emojis.
 - No markdown.
 - No header.
 - No invented information.
@@ -1116,6 +1278,10 @@ Rewrite it.
 Directly address:
 
 "${reviewText}"
+
+Keep it short.
+
+Include 1-2 natural emojis.
 
 Return ONLY the corrected customer reply.
 `
@@ -1152,20 +1318,26 @@ async function askGemini(
     'https://generativelanguage.googleapis.com/v1beta/models/' +
     model +
     ':generateContent?key=' +
-    encodeURIComponent(apiKey);
+    encodeURIComponent(
+      apiKey
+    );
 
   const response =
-    await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type':
-          'application/json',
-      },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [
-            {
-              text: `
+    await fetch(
+      url,
+      {
+        method: 'POST',
+
+        headers: {
+          'Content-Type':
+            'application/json',
+        },
+
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text: `
 You are CCIOS Review Intelligence.
 
 Write real ecommerce customer review replies.
@@ -1176,31 +1348,34 @@ For written reviews:
 - Return only the customer-facing reply.
 - No headings.
 - No markdown.
-- No emojis.
+- MUST include 1-2 natural emojis.
+- Keep replies short and natural.
 - No explanations.
 - Complete sentences.
-              `.trim(),
-            },
-          ],
-        },
-
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: prompt,
+                `.trim(),
               },
             ],
           },
-        ],
 
-        generationConfig: {
-          temperature: 0.45,
-          maxOutputTokens: 400,
-        },
-      }),
-    });
+          contents: [
+            {
+              role: 'user',
+
+              parts: [
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+
+          generationConfig: {
+            temperature: 0.45,
+            maxOutputTokens: 200,
+          },
+        }),
+      }
+    );
 
   if (!response.ok) {
     const errorText =
@@ -1254,7 +1429,9 @@ async function askGroqSafe(
   }
 
   const reply =
-    await askGroq(prompt);
+    await askGroq(
+      prompt
+    );
 
   if (
     !reply ||
@@ -1279,15 +1456,19 @@ async function generateReviewReply(
 ) {
   const reviewText =
     String(
-      review.reviewText || ''
+      review?.reviewText ||
+        ''
     ).trim();
 
   /*
    * BLANK REVIEW = INSTANT.
    */
+
   if (!reviewText) {
     return getNoCommentTemplate(
-      Number(review.rating) || 5
+      Number(
+        review?.rating
+      ) || 5
     );
   }
 
@@ -1298,10 +1479,7 @@ async function generateReviewReply(
     );
 
   /*
-   * IMPORTANT:
-   *
-   * If Gemini already hit quota on a previous request,
-   * DO NOT CALL GEMINI AGAIN.
+   * GEMINI FIRST
    */
 
   if (
@@ -1321,7 +1499,9 @@ async function generateReviewReply(
         );
 
       const rawReply =
-        await askGemini(prompt);
+        await askGemini(
+          prompt
+        );
 
       console.log(
         '[AI] SUCCESS: Gemini'
@@ -1333,7 +1513,9 @@ async function generateReviewReply(
           review
         );
 
-      if (validation.valid) {
+      if (
+        validation.valid
+      ) {
         console.log(
           '[AI] GEMINI VALIDATED'
         );
@@ -1348,11 +1530,15 @@ async function generateReviewReply(
     } catch (error) {
       console.warn(
         '[AI] Gemini failed:',
-        getErrorMessage(error)
+        getErrorMessage(
+          error
+        )
       );
 
       if (
-        isRateLimitError(error)
+        isRateLimitError(
+          error
+        )
       ) {
         aiState.geminiQuotaExhausted =
           true;
@@ -1368,8 +1554,6 @@ async function generateReviewReply(
 
   /*
    * GROQ FALLBACK
-   *
-   * Immediate.
    */
 
   const prompt =
@@ -1385,7 +1569,9 @@ async function generateReviewReply(
     );
 
     const rawReply =
-      await askGroqSafe(prompt);
+      await askGroqSafe(
+        prompt
+      );
 
     console.log(
       '[AI] SUCCESS: Groq'
@@ -1397,7 +1583,9 @@ async function generateReviewReply(
         review
       );
 
-    if (validation.valid) {
+    if (
+      validation.valid
+    ) {
       console.log(
         '[AI] GROQ VALIDATED:',
         validation.cleanedReply
@@ -1412,7 +1600,9 @@ async function generateReviewReply(
   } catch (error) {
     console.warn(
       '[AI] Groq failed:',
-      getErrorMessage(error)
+      getErrorMessage(
+        error
+      )
     );
 
     throw error;
@@ -1429,15 +1619,16 @@ async function processReview(
   profileCache
 ) {
   console.log(
-    `[Bulk AI] Processing review ${review.id}`
+    `[Bulk AI] Processing review ${review?.id}`
   );
 
   if (
-    review.status === 'REPLIED'
+    review?.status ===
+    'REPLIED'
   ) {
     return {
       success: false,
-      id: review.id,
+      id: review?.id,
       error:
         'Review is already REPLIED.',
     };
@@ -1474,7 +1665,8 @@ async function processReview(
         aiReply:
           finalValidation.cleanedReply,
 
-        status: 'GENERATED',
+        status:
+          'GENERATED',
       },
     });
 
@@ -1491,15 +1683,19 @@ async function processReview(
     };
   } catch (error) {
     console.warn(
-      `[Bulk AI] FAILED ${review.id}:`,
-      getErrorMessage(error)
+      `[Bulk AI] FAILED ${review?.id}:`,
+      getErrorMessage(
+        error
+      )
     );
 
     return {
       success: false,
-      id: review.id,
+      id: review?.id,
       error:
-        getErrorMessage(error),
+        getErrorMessage(
+          error
+        ),
     };
   }
 }
@@ -1527,17 +1723,22 @@ async function processInBatches(
       );
 
     console.log(
-      `[Bulk AI] Batch ${Math.floor(i / CONCURRENCY) + 1} — ${batch.length} reviews`
+      `[Bulk AI] Batch ${
+        Math.floor(
+          i / CONCURRENCY
+        ) + 1
+      } — ${batch.length} reviews`
     );
 
     const batchResults =
       await Promise.all(
-        batch.map((review) =>
-          processReview(
-            review,
-            aiState,
-            profileCache
-          )
+        batch.map(
+          (review) =>
+            processReview(
+              review,
+              aiState,
+              profileCache
+            )
         )
       );
 
@@ -1560,21 +1761,28 @@ export async function POST(
     let body = {};
 
     try {
-      body = await req.json();
+      body =
+        await req.json();
     } catch {
       body = {};
     }
 
     const ids =
-      Array.isArray(body.ids)
+      Array.isArray(
+        body.ids
+      )
         ? body.ids
         : [];
 
     const requestedLimit =
-      Number(body.limit) || null;
+      Number(
+        body.limit
+      ) || null;
 
     const regenerate =
-      Boolean(body.regenerate);
+      Boolean(
+        body.regenerate
+      );
 
     const hasExplicitIds =
       ids.length > 0;
@@ -1602,11 +1810,6 @@ export async function POST(
       regenerate
     );
 
-    /*
-     * IMPORTANT:
-     *
-     * Read the global Gemini state immediately.
-     */
     const aiState = {
       geminiQuotaExhausted:
         isGeminiQuotaBlocked(),
@@ -1624,22 +1827,26 @@ export async function POST(
        ======================================================== */
 
     if (hasExplicitIds) {
-      const uniqueIds = [
-        ...new Set(
-          ids
-            .filter(
-              (id) =>
-                typeof id ===
-                  'string' &&
-                id.trim() !== ''
-            )
-            .map((id) =>
-              id.trim()
-            )
-        ),
-      ];
+      const uniqueIds =
+        [
+          ...new Set(
+            ids
+              .filter(
+                (id) =>
+                  typeof id ===
+                    'string' &&
+                  id.trim() !== ''
+              )
+              .map(
+                (id) =>
+                  id.trim()
+              )
+          ),
+        ];
 
-      if (!uniqueIds.length) {
+      if (
+        !uniqueIds.length
+      ) {
         return NextResponse.json({
           success: true,
           generated: 0,
@@ -1682,7 +1889,8 @@ export async function POST(
           },
 
           orderBy: {
-            createdAt: 'desc',
+            createdAt:
+              'desc',
           },
 
           ...(requestedLimit
@@ -1699,7 +1907,9 @@ export async function POST(
       candidates.length
     );
 
-    if (!candidates.length) {
+    if (
+      !candidates.length
+    ) {
       console.log(
         '[Bulk AI] No reviews require generation.'
       );
@@ -1713,15 +1923,9 @@ export async function POST(
       });
     }
 
-    /*
-     * Cache profiles during this request.
-     */
     const profileCache =
       new Map();
 
-    /*
-     * FAST CONTROLLED PARALLEL PROCESSING
-     */
     const results =
       await processInBatches(
         candidates,
@@ -1744,8 +1948,10 @@ export async function POST(
     const errors =
       failedResults.map(
         (result) => ({
-          id: result.id,
-          error: result.error,
+          id:
+            result.id,
+          error:
+            result.error,
         })
       );
 
@@ -1788,27 +1994,37 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
+
       generated:
         generatedCount,
+
       failed:
         failedResults.length,
+
       total:
         candidates.length,
+
       errors,
+
       geminiQuotaExhausted:
         aiState.geminiQuotaExhausted,
     });
   } catch (error) {
     console.error(
       '[Bulk AI] FATAL ERROR:',
-      getErrorMessage(error)
+      getErrorMessage(
+        error
+      )
     );
 
     return NextResponse.json(
       {
         success: false,
+
         error:
-          getErrorMessage(error),
+          getErrorMessage(
+            error
+          ),
       },
       {
         status: 500,
