@@ -1,24 +1,82 @@
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 import { prisma as db } from '@/lib/prisma';
 import { askGroq } from '@/src/services/ai/GroqService';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// ============================================================
-// CONFIG
-// ============================================================
+/**
+ * ============================================================
+ * CCIOS — MASTER REVIEW AI GENERATION ENGINE
+ * ============================================================
+ *
+ * OPTIMIZED:
+ *
+ * 1. Gemini quota is remembered across requests.
+ * 2. Once Gemini returns 429/quota, Gemini is skipped immediately.
+ * 3. Groq becomes the immediate fallback.
+ * 4. No unnecessary 700ms delay between reviews.
+ * 5. Brand AI profiles are cached during the request.
+ * 6. Reviews are processed in controlled parallel batches.
+ * 7. Written reviews must address actual customer content.
+ * 8. Blank reviews use instant rating templates.
+ * 9. REPLIED reviews are never regenerated.
+ * 10. Explicit generated IDs may be regenerated.
+ *
+ * ============================================================
+ */
 
-const REQUEST_DELAY_MS = 500;
-const MAX_RETRIES = 1;
-const RETRY_BASE_DELAY_MS = 2000;
+/* ============================================================
+   CONFIG
+   ============================================================ */
 
-// ============================================================
-// HELPERS
-// ============================================================
+const MAX_API_RETRIES = 0;
 
-const delay = (ms) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const MIN_WORDS = 25;
+const MAX_WORDS = 75;
+
+/*
+ * Once Gemini hits the free-tier quota, do not call Gemini
+ * again for 24 hours on the same running server instance.
+ */
+const GEMINI_QUOTA_COOLDOWN_MS =
+  24 * 60 * 60 * 1000;
+
+/*
+ * Controlled concurrency.
+ *
+ * 3 is fast without aggressively hammering Groq.
+ */
+const CONCURRENCY = 3;
+
+/* ============================================================
+   GLOBAL GEMINI QUOTA STATE
+   ============================================================ */
+
+const GLOBAL_STATE =
+  globalThis.__CCIOS_GEMINI_STATE__ ||
+  {
+    quotaUntil: 0,
+  };
+
+globalThis.__CCIOS_GEMINI_STATE__ = GLOBAL_STATE;
+
+function isGeminiQuotaBlocked() {
+  return Date.now() < GLOBAL_STATE.quotaUntil;
+}
+
+function blockGeminiQuota() {
+  GLOBAL_STATE.quotaUntil =
+    Date.now() + GEMINI_QUOTA_COOLDOWN_MS;
+
+  console.warn(
+    '[AI] Gemini quota blocked for 24 hours.'
+  );
+}
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
 
 function getErrorMessage(error) {
   if (!error) return 'Unknown error';
@@ -41,34 +99,6 @@ function getErrorMessage(error) {
 function getErrorText(error) {
   return getErrorMessage(error).toLowerCase();
 }
-
-// ============================================================
-// PLACEHOLDER PROTECTION
-// ============================================================
-
-const PLACEHOLDER_PATTERNS = [
-  /\[Company Name\]/i,
-  /\[Your Company Name\]/i,
-  /\[Customer Service Team\]/i,
-  /\[Your Customer Service Team\]/i,
-  /\[Customer Service\]/i,
-  /\[Brand Name\]/i,
-  /\[Store Name\]/i,
-  /\[Your Store Name\]/i,
-  /\[[^\]]+\]/,
-];
-
-function hasPlaceholder(text) {
-  if (!text) return false;
-
-  return PLACEHOLDER_PATTERNS.some((pattern) =>
-    pattern.test(text)
-  );
-}
-
-// ============================================================
-// ERROR TYPES
-// ============================================================
 
 function isRateLimitError(error) {
   const text = getErrorText(error);
@@ -104,58 +134,27 @@ function isRetryableError(error) {
   );
 }
 
-// ============================================================
-// REVIEW ELIGIBILITY
-// ============================================================
+/* ============================================================
+   BRAND NORMALIZATION
+   ============================================================ */
 
-function isRegenerationCandidate(review) {
-  if (!review) return false;
+function normalizeBrand(rawBrand) {
+  const value = String(rawBrand || '').trim();
 
-  // Never regenerate already replied reviews
-  if (review.status === 'REPLIED') {
-    return false;
-  }
-
-  // Generate if no reply exists
-  // OR existing reply contains a placeholder
-  return (
-    !review.aiReply ||
-    hasPlaceholder(review.aiReply)
-  );
-}
-
-// ============================================================
-// BRAND + PROMPT
-// ============================================================
-
-function buildPrompt(review) {
-  const reviewText =
-    (review.reviewText || '').trim();
-
-  const rating =
-    Number(review.rating) || 5;
-
-  const rawBrand =
-    (review.brand || review.storeName || '').trim();
-
-  const brandAliases = {
+  const aliases = {
     RAV: 'RAV Design',
     'RAV DESIGN': 'RAV Design',
 
     NICOLE: 'Nicole Collection',
     'NICOLE COLLECTION': 'Nicole Collection',
 
-    'HUSH PUPPIES':
-      'Hush Puppies Accessories',
-
+    'HUSH PUPPIES': 'Hush Puppies Accessories',
     'HUSH PUPPIES ACCESSORIES':
       'Hush Puppies Accessories',
 
-    OBERMAIN:
-      'Obermain Accessories Official Store',
-
+    OBERMAIN: 'Obermain',
     'OBERMAIN ACCESSORIES OFFICIAL STORE':
-      'Obermain Accessories Official Store',
+      'Obermain',
 
     'JOHN LANGFORD':
       'JOHN LANGFORD OF LONDON',
@@ -164,205 +163,974 @@ function buildPrompt(review) {
       'JOHN LANGFORD OF LONDON',
   };
 
-  const brandName =
-    brandAliases[rawBrand.toUpperCase()] ||
-    rawBrand ||
-    'Our Store';
+  return (
+    aliases[value.toUpperCase()] ||
+    value ||
+    'Our Store'
+  );
+}
 
-  const brandVoices = {
-    'RAV Design': `
-Premium, rugged, confident and sophisticated.
-Focus on quality, craftsmanship, durability and practical everyday style.
-Use confident professional language.
-Never sound cute, overly casual or overly emotional.
-`,
+/* ============================================================
+   DEFAULT BRAND VOICES
+   ============================================================ */
 
-    'Nicole Collection': `
-Elegant, feminine, modern and refined.
-Focus on flattering style, elegance, quality and effortless fashion.
-Use warm but polished language.
-Never sound rugged or corporate.
-`,
+function getDefaultBrandVoice(brandName) {
+  const voices = {
+    'RAV Design':
+      'Premium, rugged, sophisticated and adventurous. Focus on craftsmanship, durability, quality and timeless design.',
 
-    'Hush Puppies Accessories': `
-Friendly, trustworthy and professional.
-Focus on comfort, quality, thoughtful design and everyday usability.
-Sound warm and approachable while remaining polished.
-`,
+    'Nicole Collection':
+      'Elegant, feminine, modern and refined. Focus on flattering design, sophistication, effortless style and quality.',
 
-    'Obermain Accessories Official Store': `
-Premium, refined and practical.
-Focus on craftsmanship, quality, sophisticated design and everyday functionality.
-Use mature, polished and professional language.
-`,
+    'Hush Puppies Accessories':
+      'Friendly, trustworthy and professional. Focus on comfort, quality, practicality and thoughtful everyday design.',
 
-    'JOHN LANGFORD OF LONDON': `
-Classic, distinguished, formal and sophisticated.
-Focus on timeless style, refinement, craftsmanship and quality.
-Use elegant professional language.
-Avoid casual, cute or overly enthusiastic expressions.
-`,
+    Obermain:
+      'Premium, refined and practical. Focus on craftsmanship, quality, sophisticated design and everyday functionality.',
+
+    'JOHN LANGFORD OF LONDON':
+      'Classic, formal and sophisticated. Focus on timeless style, craftsmanship, refinement and distinguished quality.',
   };
 
-  const brandVoice =
-    brandVoices[brandName] ||
-    `
-Professional, warm and brand-appropriate.
-`;
+  return (
+    voices[brandName] ||
+    'Professional, warm, natural and customer-focused.'
+  );
+}
 
-  const hasComment =
-    Boolean(reviewText);
+/* ============================================================
+   LANGUAGE
+   ============================================================ */
 
-  const reviewDisplay =
-    hasComment
-      ? `"${reviewText}"`
-      : '[NO WRITTEN COMMENT]';
+function detectLanguage(text) {
+  const value = String(text || '');
 
-  let actionRule = '';
+  if (/[\u4e00-\u9fff]/.test(value)) {
+    return 'Simplified Chinese';
+  }
 
-  if (rating >= 5 && !hasComment) {
-    actionRule = `
-5-STAR WITH NO COMMENT:
-Use a concise professional appreciation reply.
-Do NOT invent what the customer liked.
-`;
-  } else if (
-    rating === 4 &&
-    !hasComment
+  const malayWords = [
+    'sangat',
+    'cantik',
+    'bagus',
+    'terima kasih',
+    'kualiti',
+    'barang',
+    'penghantaran',
+    'cepat',
+    'lambat',
+    'sesuai',
+    'puas',
+    'harga',
+    'boleh',
+  ];
+
+  const lower = value.toLowerCase();
+
+  const matches = malayWords.filter((word) =>
+    lower.includes(word)
+  ).length;
+
+  if (matches >= 1) {
+    return 'Malaysian Malay';
+  }
+
+  return 'English';
+}
+
+/* ============================================================
+   KNOWLEDGE BASE
+   ============================================================ */
+
+function filterRelevantKnowledge(
+  knowledgeBase,
+  reviewText
+) {
+  if (!knowledgeBase) {
+    return 'No additional knowledge base information provided.';
+  }
+
+  const text = String(
+    reviewText || ''
+  ).toLowerCase();
+
+  const sections = String(knowledgeBase)
+    .split('===')
+    .map((section) => section.trim())
+    .filter(Boolean);
+
+  if (!sections.length) {
+    return String(knowledgeBase);
+  }
+
+  const keywords = [];
+
+  if (
+    text.includes('warranty') ||
+    text.includes('guarantee') ||
+    text.includes('repair')
   ) {
-    actionRule = `
-4-STAR WITH NO COMMENT:
-Thank the customer for the rating and support.
-Do not imply that anything went wrong.
-Leave a positive opening for future service.
-`;
-  } else if (
-    rating === 3 &&
-    !hasComment
+    keywords.push(
+      'warranty',
+      'guarantee',
+      'repair'
+    );
+  }
+
+  if (
+    text.includes('size') ||
+    text.includes('small') ||
+    text.includes('tight') ||
+    text.includes('big') ||
+    text.includes('large') ||
+    text.includes('fit')
   ) {
-    actionRule = `
-3-STAR WITH NO COMMENT:
-Remain neutral and professional.
-Thank the customer for taking the time to rate the store.
-Do not assume dissatisfaction or invent a problem.
-`;
-  } else if (
-    rating === 2 &&
-    !hasComment
+    keywords.push(
+      'size',
+      'fitting',
+      'fit'
+    );
+  }
+
+  if (
+    text.includes('return') ||
+    text.includes('refund') ||
+    text.includes('broken') ||
+    text.includes('damaged')
   ) {
-    actionRule = `
-2-STAR WITH NO COMMENT:
-Be polite and mildly apologetic.
-Acknowledge that the experience may not have met expectations.
-Do not guess what the problem was.
-Invite the customer to contact the store if assistance is needed.
-`;
-  } else if (
-    rating <= 1 &&
-    !hasComment
+    keywords.push(
+      'return',
+      'refund',
+      'damage'
+    );
+  }
+
+  if (
+    text.includes('ship') ||
+    text.includes('shipping') ||
+    text.includes('delivery') ||
+    text.includes('late') ||
+    text.includes('slow')
   ) {
-    actionRule = `
-1-STAR WITH NO COMMENT:
-Be professional, respectful and apologetic.
-Do not guess what went wrong.
-Invite the customer to contact the store for assistance.
-`;
-  } else if (
-    rating >= 4 &&
-    hasComment
+    keywords.push(
+      'shipping',
+      'delivery',
+      'sla'
+    );
+  }
+
+  if (!keywords.length) {
+    return sections
+      .slice(0, 5)
+      .join('\n===\n');
+  }
+
+  const matched = sections.filter(
+    (section) => {
+      const lowerSection =
+        section.toLowerCase();
+
+      return keywords.some((keyword) =>
+        lowerSection.includes(keyword)
+      );
+    }
+  );
+
+  return matched.length
+    ? matched.join('\n===\n')
+    : sections
+        .slice(0, 5)
+        .join('\n===\n');
+}
+
+/* ============================================================
+   NO COMMENT TEMPLATE
+   ============================================================ */
+
+function getNoCommentTemplate(rating) {
+  if (rating >= 5) {
+    return (
+      'Thank you so much for your 5-star rating and support! ' +
+      'We truly appreciate your trust in our store and hope you continue to enjoy your purchase.'
+    );
+  }
+
+  if (rating === 4) {
+    return (
+      'Thank you so much for your 4-star rating and support! ' +
+      'We are pleased to know you had a positive experience and look forward to serving you again.'
+    );
+  }
+
+  if (rating === 3) {
+    return (
+      'Thank you for taking the time to leave us a rating. ' +
+      'We appreciate your feedback and support, and we hope to provide you with an even better experience next time.'
+    );
+  }
+
+  return (
+    'Thank you for your feedback. ' +
+    'We are sorry that your experience did not fully meet expectations, and we are always here to assist if you need any support.'
+  );
+}
+
+/* ============================================================
+   STOP WORDS
+   ============================================================ */
+
+const STOP_WORDS = new Set([
+  'the',
+  'and',
+  'for',
+  'with',
+  'that',
+  'this',
+  'very',
+  'good',
+  'great',
+  'nice',
+  'item',
+  'product',
+  'really',
+  'was',
+  'are',
+  'is',
+  'it',
+  'to',
+  'of',
+  'a',
+  'an',
+  'in',
+  'on',
+  'my',
+  'i',
+  'we',
+  'you',
+  'your',
+  'our',
+  'so',
+  'as',
+  'at',
+  'from',
+  'be',
+  'have',
+  'had',
+  'has',
+  'easy',
+  'quality',
+]);
+
+/* ============================================================
+   REVIEW TERMS
+   ============================================================ */
+
+function extractReviewTerms(reviewText) {
+  const normalized = String(
+    reviewText || ''
+  )
+    .toLowerCase()
+    .replace(
+      /[^\p{L}\p{N}\s]/gu,
+      ' '
+    );
+
+  return normalized
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter(Boolean)
+    .filter((word) => word.length >= 4)
+    .filter(
+      (word) => !STOP_WORDS.has(word)
+    )
+    .slice(0, 12);
+}
+
+/* ============================================================
+   SPECIFICITY
+   ============================================================ */
+
+function isGenericRatingOnlyReply(
+  reply,
+  reviewText
+) {
+  if (!reviewText || !reviewText.trim()) {
+    return false;
+  }
+
+  const normalized = String(
+    reply || ''
+  )
+    .toLowerCase()
+    .replace(
+      /[^\p{L}\p{N}\s]/gu,
+      ' '
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const genericPatterns = [
+    'thank you for your 5 star review',
+    'thank you for your 5 star rating',
+    'thank you for your 5-star review',
+    'thank you for your 5-star rating',
+    'thank you for your five star review',
+    'thank you for your five star rating',
+    'thank you for your rating',
+    'thank you for the rating',
+    'thank you for the 5 star review',
+  ];
+
+  const compact =
+    normalized.replace(/\s+/g, '');
+
+  for (
+    const pattern of genericPatterns
   ) {
-    actionRule = `
-POSITIVE REVIEW WITH COMMENT:
-Read the customer's actual words carefully.
-Identify the specific things they mentioned positively.
-Thank them and directly acknowledge those points.
-Do NOT fall back to a generic star-only reply.
-`;
-  } else {
-    actionRule = `
-REVIEW WITH COMMENT AND RATING 1-3:
-Handle carefully.
-Acknowledge the customer's actual concern.
-Do not argue or become defensive.
-Do not invent facts.
-Do not promise compensation, replacement, refund or policy exceptions.
-`;
+    const patternCompact =
+      pattern
+        .replace(
+          /[^\p{L}\p{N}]/gu,
+          ''
+        )
+        .replace(/\s+/g, '');
+
+    if (
+      compact.includes(patternCompact) &&
+      normalized.split(/\s+/).length <= 15
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function validateReviewSpecificity(
+  reply,
+  reviewText
+) {
+  if (!reviewText || !reviewText.trim()) {
+    return {
+      valid: true,
+      reason:
+        'No written review; specificity check not required.',
+    };
+  }
+
+  if (
+    isGenericRatingOnlyReply(
+      reply,
+      reviewText
+    )
+  ) {
+    return {
+      valid: false,
+      reason:
+        'Generic rating-only response detected for a written review.',
+    };
+  }
+
+  const reviewTerms =
+    extractReviewTerms(reviewText);
+
+  if (!reviewTerms.length) {
+    return {
+      valid: true,
+      reason:
+        'No strong lexical terms available.',
+    };
+  }
+
+  const replyLower =
+    String(reply).toLowerCase();
+
+  const matchedTerms =
+    reviewTerms.filter((term) =>
+      replyLower.includes(term)
+    );
+
+  const requiredMatches =
+    reviewTerms.length >= 5 ? 2 : 1;
+
+  if (
+    matchedTerms.length <
+    requiredMatches
+  ) {
+    return {
+      valid: false,
+      reason:
+        'Reply does not address enough specific details from the customer review.',
+    };
+  }
+
+  return {
+    valid: true,
+    reason:
+      `Matched review terms: ${matchedTerms.join(', ')}`,
+  };
+}
+
+/* ============================================================
+   CLEAN
+   ============================================================ */
+
+function cleanReply(text) {
+  let cleaned = String(
+    text || ''
+  ).trim();
+
+  cleaned = cleaned
+    .replace(
+      /^```[\w-]*\s*/i,
+      ''
+    )
+    .replace(
+      /\s*```$/i,
+      ''
+    )
+    .trim();
+
+  cleaned = cleaned
+    .replace(
+      /^["“”']+/,
+      ''
+    )
+    .replace(
+      /["“”']+$/,
+      ''
+    )
+    .trim();
+
+  cleaned = cleaned.replace(
+    /^(reply|response|customer reply|ai reply)\s*:\s*/i,
+    ''
+  );
+
+  return cleaned.trim();
+}
+
+/* ============================================================
+   VALIDATION
+   ============================================================ */
+
+function validateReply(
+  reply,
+  review
+) {
+  if (
+    !reply ||
+    typeof reply !== 'string'
+  ) {
+    return {
+      valid: false,
+      reason: 'Empty AI response.',
+    };
+  }
+
+  const cleaned =
+    cleanReply(reply);
+
+  if (!cleaned) {
+    return {
+      valid: false,
+      reason:
+        'Empty response after cleaning.',
+    };
+  }
+
+  if (
+    cleaned.includes('```') ||
+    cleaned.includes('**') ||
+    cleaned.includes('__')
+  ) {
+    return {
+      valid: false,
+      reason:
+        'Markdown detected.',
+    };
+  }
+
+  if (
+    /[\u{1F300}-\u{1FAFF}]/u.test(
+      cleaned
+    )
+  ) {
+    return {
+      valid: false,
+      reason:
+        'Emoji detected.',
+    };
+  }
+
+  const brandName =
+    normalizeBrand(
+      review.brand ||
+        review.storeName
+    );
+
+  const escapedBrand =
+    brandName.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      '\\$&'
+    );
+
+  const brandHeaderRegex =
+    new RegExp(
+      '^' +
+        escapedBrand +
+        '\\s*[:\\-]\\s*',
+      'i'
+    );
+
+  if (
+    brandHeaderRegex.test(cleaned)
+  ) {
+    return {
+      valid: false,
+      reason:
+        'Brand header detected.',
+    };
+  }
+
+  if (
+    !/[.!?。！？]$/.test(cleaned)
+  ) {
+    return {
+      valid: false,
+      reason:
+        'Missing terminal punctuation.',
+    };
+  }
+
+  const language =
+    detectLanguage(
+      review.reviewText
+    );
+
+  const wordCount =
+    cleaned
+      .split(/\s+/)
+      .filter(Boolean)
+      .length;
+
+  if (
+    language !==
+      'Simplified Chinese' &&
+    wordCount < MIN_WORDS
+  ) {
+    return {
+      valid: false,
+      reason:
+        `Reply too short. Minimum ${MIN_WORDS} words.`,
+    };
+  }
+
+  if (
+    language !==
+      'Simplified Chinese' &&
+    wordCount > MAX_WORDS
+  ) {
+    return {
+      valid: false,
+      reason:
+        `Reply too long. Maximum ${MAX_WORDS} words.`,
+    };
+  }
+
+  const words = cleaned
+    .toLowerCase()
+    .replace(
+      /[^\p{L}\p{N}\s]/gu,
+      ''
+    )
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const lastWord =
+    words[words.length - 1];
+
+  const forbiddenEndings =
+    new Set([
+      'to',
+      'for',
+      'that',
+      'we',
+      'our',
+      'your',
+      'the',
+      'and',
+      'because',
+      'if',
+      'when',
+      'hear',
+      'appreciate',
+      'delighted',
+      'glad',
+      'is',
+      'are',
+      'of',
+      'with',
+    ]);
+
+  if (
+    forbiddenEndings.has(lastWord)
+  ) {
+    return {
+      valid: false,
+      reason:
+        `Response appears incomplete; ends with "${lastWord}".`,
+    };
+  }
+
+  const specificity =
+    validateReviewSpecificity(
+      cleaned,
+      review.reviewText
+    );
+
+  if (!specificity.valid) {
+    return {
+      valid: false,
+      reason:
+        specificity.reason,
+    };
+  }
+
+  return {
+    valid: true,
+    cleanedReply: cleaned,
+    reason:
+      specificity.reason,
+  };
+}
+
+/* ============================================================
+   BRAND PROFILE CACHE
+   ============================================================ */
+
+async function loadBrandProfile(
+  review,
+  cache
+) {
+  const rawBrand =
+    review.brand ||
+    review.storeName ||
+    '';
+
+  if (!rawBrand) {
+    return null;
+  }
+
+  const cacheKey =
+    String(rawBrand)
+      .trim()
+      .toUpperCase();
+
+  if (
+    cache.has(cacheKey)
+  ) {
+    return cache.get(cacheKey);
+  }
+
+  try {
+    const brand =
+      await db.brand.findFirst({
+        where: {
+          name: {
+            equals: rawBrand,
+            mode: 'insensitive',
+          },
+        },
+        include: {
+          AIProfile: true,
+        },
+      });
+
+    const profile =
+      brand?.AIProfile || null;
+
+    cache.set(
+      cacheKey,
+      profile
+    );
+
+    return profile;
+  } catch (error) {
+    console.warn(
+      '[AI] Unable to load brand AI profile:',
+      getErrorMessage(error)
+    );
+
+    cache.set(
+      cacheKey,
+      null
+    );
+
+    return null;
+  }
+}
+
+/* ============================================================
+   PROMPT
+   ============================================================ */
+
+function buildPrompt(
+  review,
+  aiProfile,
+  isRetry = false
+) {
+  const reviewText =
+    String(
+      review.reviewText || ''
+    ).trim();
+
+  const rating =
+    Number(review.rating) || 5;
+
+  const brandName =
+    normalizeBrand(
+      review.brand ||
+        review.storeName
+    );
+
+  const language =
+    detectLanguage(reviewText);
+
+  const tone =
+    aiProfile?.tone ||
+    'Warm, professional and natural';
+
+  const personality =
+    aiProfile?.personality ||
+    'Helpful, genuine ecommerce customer service representative.';
+
+  const replyStyle =
+    aiProfile?.replyStyle ||
+    'Natural, concise, personalized and customer-focused.';
+
+  const brandRules =
+    aiProfile?.brandRules ||
+    'Be polite, sincere, specific and helpful.';
+
+  const forbiddenWords =
+    Array.isArray(
+      aiProfile?.forbiddenWords
+    )
+      ? aiProfile.forbiddenWords.join(
+          ', '
+        )
+      : String(
+          aiProfile?.forbiddenWords ||
+            'None'
+        );
+
+  const knowledge =
+    filterRelevantKnowledge(
+      aiProfile?.knowledgeBase ||
+        '',
+      reviewText
+    );
+
+  if (!reviewText) {
+    return `
+You are the official customer service representative for ${brandName}.
+
+The customer left NO written comment.
+
+Customer rating: ${rating}/5
+
+Return ONLY a natural customer-facing reply.
+
+RULES:
+- Do not invent product details.
+- Do not mention details the customer did not provide.
+- No emojis.
+- No markdown.
+- No store-name header.
+- No quotation marks.
+- Complete sentences only.
+- End with proper punctuation.
+- Keep it natural and not overly promotional.
+- Reply in ${language}.
+
+Brand voice:
+${getDefaultBrandVoice(
+  brandName
+)}
+
+Tone:
+${tone}
+
+Personality:
+${personality}
+
+Reply style:
+${replyStyle}
+
+Brand rules:
+${brandRules}
+
+Forbidden words:
+${forbiddenWords}
+`.trim();
   }
 
   return `
-You are the official customer-service representative for:
+You are the official customer service representative for ${brandName}.
 
-${brandName}
+THIS IS A WRITTEN CUSTOMER REVIEW.
 
-BRAND VOICE:
-${brandVoice}
+You MUST respond to the customer's actual words.
 
-CUSTOMER RATING:
+============================================================
+CUSTOMER REVIEW
+============================================================
+
+Rating:
 ${rating}/5
 
-CUSTOMER REVIEW:
-${reviewDisplay}
+Customer Review:
+"${reviewText}"
 
-RESPONSE RULE:
-${actionRule}
+Language:
+${language}
 
-LANGUAGE:
-Reply in the same language used by the customer.
+============================================================
+BRAND VOICE
+============================================================
 
-For Malaysian Malay:
-Use natural Malaysian Malay.
+Default Brand Voice:
+${getDefaultBrandVoice(
+  brandName
+)}
 
-For Chinese:
-Use natural Simplified Chinese suitable for Malaysian customers.
+Configured Tone:
+${tone}
 
-Do not use unnatural literal translation.
+Configured Personality:
+${personality}
 
-PRODUCT INFORMATION:
-Only use product information supplied by the system.
-Never invent:
-- material
-- specifications
-- features
-- warranty
-- delivery promises
-- refund policy
-- replacement policy
-- product claims
+Configured Reply Style:
+${replyStyle}
 
-IMPORTANT RULES:
+Configured Brand Rules:
+${brandRules}
 
-- Start the reply with the exact brand name:
-  ${brandName}
+Forbidden Words:
+${forbiddenWords}
 
-- No emojis.
-- No hashtags.
+============================================================
+RELEVANT KNOWLEDGE
+============================================================
+
+${knowledge}
+
+============================================================
+MANDATORY RULES
+============================================================
+
+1. Return ONLY the final customer-facing reply.
+
+2. Address the actual written review.
+
+3. NEVER return a generic rating-only response.
+
+4. Mention or naturally address at least one
+   meaningful detail from the review.
+
+5. If the customer mentions quality, material,
+   design, comfort, fit, size, delivery, packaging,
+   usability, durability or another detail,
+   respond specifically to it.
+
+6. Do not repeat the review word-for-word.
+
+7. If there are multiple meaningful points,
+   acknowledge the important ones naturally.
+
+8. If there is criticism or concern,
+   acknowledge it respectfully.
+
+9. Do not invent facts, specifications,
+   warranty promises, delivery promises,
+   discounts or policies.
+
+10. No store-name header.
+
+11. No brand title prefix.
+
+12. No quotation marks.
+
+13. No emojis.
+
+14. No hashtags.
+
+15. No markdown.
+
+16. No bullet points.
+
+17. Write ${MIN_WORDS}-${MAX_WORDS} words.
+
+18. Use 2-3 natural sentences.
+
+19. Every sentence must be complete.
+
+20. Sound like a genuine seller,
+    not an advertisement.
+
+21. Do not mention these instructions.
+
+22. Do not explain reasoning.
+
+23. Return ONLY the final reply.
+
+============================================================
+QUALITY CHECK
+============================================================
+
+Before answering, silently verify:
+
+- Actual review addressed.
+- At least one meaningful review detail addressed.
+- Not a generic rating reply.
+- Complete sentences.
+- Correct length.
+- No emoji.
 - No markdown.
-- No bullet points.
-- No quotation marks around the reply.
-- Do not mention AI.
-- Do not mention automation.
-- Do not mention prompts.
-- Do not mention models.
-- Do not use placeholders.
-- Do not invent customer experiences.
-- Do not invent product facts.
-- Do not claim a problem the customer did not mention.
-- Do not promise anything unverifiable.
-- Keep the reply concise.
-- Keep it natural.
-- Avoid repetitive wording.
-- Make the wording different between brands.
-- The reply must sound like ${brandName}.
+- No header.
+- No invented information.
+- Proper punctuation.
 
-Return ONLY the final customer reply.
+${
+  isRetry
+    ? `
+============================================================
+RETRY
+============================================================
+
+Your previous response was rejected.
+
+Rewrite it.
+
+Directly address:
+
+"${reviewText}"
+
+Return ONLY the corrected customer reply.
+`
+    : ''
+}
 `.trim();
 }
 
-// ============================================================
-// GEMINI
-// ============================================================
+/* ============================================================
+   GEMINI
+   ============================================================ */
 
-async function askGemini(prompt) {
+async function askGemini(
+  prompt
+) {
   const apiKey =
     process.env.GEMINI_API_KEY;
 
@@ -372,7 +1140,8 @@ async function askGemini(prompt) {
 
   if (
     !apiKey ||
-    apiKey === 'YOUR_GEMINI_API_KEY'
+    apiKey ===
+      'YOUR_GEMINI_API_KEY'
   ) {
     throw new Error(
       'Gemini API key is not configured.'
@@ -380,25 +1149,37 @@ async function askGemini(prompt) {
   }
 
   const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`;
+    'https://generativelanguage.googleapis.com/v1beta/models/' +
+    model +
+    ':generateContent?key=' +
+    encodeURIComponent(apiKey);
 
   const response =
     await fetch(url, {
       method: 'POST',
-
       headers: {
         'Content-Type':
           'application/json',
       },
-
       body: JSON.stringify({
         systemInstruction: {
           parts: [
             {
-              text:
-                'You are a professional ecommerce customer service assistant. Return ONLY the final customer reply. Never explain your reasoning.',
+              text: `
+You are CCIOS Review Intelligence.
+
+Write real ecommerce customer review replies.
+
+For written reviews:
+- Address the customer's actual words.
+- Never return a generic rating-only response.
+- Return only the customer-facing reply.
+- No headings.
+- No markdown.
+- No emojis.
+- No explanations.
+- Complete sentences.
+              `.trim(),
             },
           ],
         },
@@ -406,7 +1187,6 @@ async function askGemini(prompt) {
         contents: [
           {
             role: 'user',
-
             parts: [
               {
                 text: prompt,
@@ -416,8 +1196,8 @@ async function askGemini(prompt) {
         ],
 
         generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 200,
+          temperature: 0.45,
+          maxOutputTokens: 400,
         },
       }),
     });
@@ -435,8 +1215,12 @@ async function askGemini(prompt) {
     await response.json();
 
   const text =
-    data?.candidates?.[0]?.content?.parts
-      ?.map((part) => part?.text || '')
+    data?.candidates?.[0]
+      ?.content?.parts
+      ?.map(
+        (part) =>
+          part?.text || ''
+      )
       .join('')
       .trim();
 
@@ -449,30 +1233,25 @@ async function askGemini(prompt) {
   return text;
 }
 
-// ============================================================
-// GROQ
-// ============================================================
+/* ============================================================
+   GROQ
+   ============================================================ */
 
-async function askGroqSafe(prompt) {
+async function askGroqSafe(
+  prompt
+) {
   const apiKey =
     process.env.GROQ_API_KEY;
 
   if (
     !apiKey ||
-    apiKey === 'YOUR_GROQ_API_KEY'
+    apiKey ===
+      'YOUR_GROQ_API_KEY'
   ) {
     throw new Error(
       'Groq API key is not configured.'
     );
   }
-
-  const model =
-    process.env.GROQ_MODEL ||
-    'llama-3.1-8b-instant';
-
-  console.log(
-    `[AI] Trying Groq model: ${model}`
-  );
 
   const reply =
     await askGroq(prompt);
@@ -489,282 +1268,313 @@ async function askGroqSafe(prompt) {
   return reply.trim();
 }
 
-// ============================================================
-// OLLAMA
-// ============================================================
+/* ============================================================
+   GENERATION ENGINE
+   ============================================================ */
 
-async function askOllama(prompt) {
-  const apiUrl =
-    process.env.OLLAMA_API_URL ||
-    'http://127.0.0.1:11434/api/chat';
-
-  const model =
-    process.env.OLLAMA_MODEL ||
-    'qwen3:4b';
-
-  const url =
-    apiUrl.replace(
-      /\/api\/generate\/?$/,
-      '/api/chat'
-    );
-
-  console.log(
-    `[AI] Trying Ollama model: ${model}`
-  );
-
-  const response =
-    await fetch(url, {
-      method: 'POST',
-
-      headers: {
-        'Content-Type':
-          'application/json',
-      },
-
-      body: JSON.stringify({
-        model,
-
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are a professional ecommerce customer service assistant. Return ONLY the final customer reply. Never explain your reasoning.',
-          },
-
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-
-        stream: false,
-
-        options: {
-          temperature: 0.3,
-        },
-      }),
-    });
-
-  if (!response.ok) {
-    const errorText =
-      await response.text();
-
-    throw new Error(
-      `Ollama ${response.status}: ${errorText}`
-    );
-  }
-
-  const data =
-    await response.json();
-
-  const text =
-    data?.message?.content?.trim();
-
-  if (!text) {
-    throw new Error(
-      'Ollama returned an empty response.'
-    );
-  }
-
-  return text;
-}
-
-// ============================================================
-// AI FALLBACK ENGINE
-//
-// IMPORTANT:
-// Gemini quota state belongs to THIS bulk request.
-// Once Gemini returns 429/quota,
-// all remaining reviews go directly to Groq.
-// ============================================================
-
-async function generateWithFallback(
-  prompt,
-  state
+async function generateReviewReply(
+  review,
+  aiState,
+  profileCache
 ) {
-  const errors = [];
+  const reviewText =
+    String(
+      review.reviewText || ''
+    ).trim();
 
-  // ----------------------------------------------------------
-  // GEMINI
-  // ----------------------------------------------------------
+  /*
+   * BLANK REVIEW = INSTANT.
+   */
+  if (!reviewText) {
+    return getNoCommentTemplate(
+      Number(review.rating) || 5
+    );
+  }
 
-  if (!state.geminiQuotaExhausted) {
+  const aiProfile =
+    await loadBrandProfile(
+      review,
+      profileCache
+    );
+
+  /*
+   * IMPORTANT:
+   *
+   * If Gemini already hit quota on a previous request,
+   * DO NOT CALL GEMINI AGAIN.
+   */
+
+  if (
+    !aiState.geminiQuotaExhausted &&
+    !isGeminiQuotaBlocked()
+  ) {
     try {
       console.log(
-        '[AI] Trying Gemini...'
+        '[AI] Trying Gemini'
       );
 
-      const reply =
-        await askGemini(prompt);
-
-      if (
-        !reply?.trim() ||
-        hasPlaceholder(reply)
-      ) {
-        throw new Error(
-          'Gemini generated an invalid reply.'
+      const prompt =
+        buildPrompt(
+          review,
+          aiProfile,
+          false
         );
-      }
+
+      const rawReply =
+        await askGemini(prompt);
 
       console.log(
         '[AI] SUCCESS: Gemini'
       );
 
-      return {
-        reply: reply.trim(),
-        provider: 'Gemini',
-        errors,
-      };
-    } catch (error) {
-      const message =
-        getErrorMessage(error);
+      const validation =
+        validateReply(
+          rawReply,
+          review
+        );
+
+      if (validation.valid) {
+        console.log(
+          '[AI] GEMINI VALIDATED'
+        );
+
+        return validation.cleanedReply;
+      }
 
       console.warn(
-        `[AI] Gemini failed: ${message}`
+        '[AI] Gemini validation failed:',
+        validation.reason
+      );
+    } catch (error) {
+      console.warn(
+        '[AI] Gemini failed:',
+        getErrorMessage(error)
       );
 
-      errors.push({
-        provider: 'Gemini',
-        error: message,
-      });
+      if (
+        isRateLimitError(error)
+      ) {
+        aiState.geminiQuotaExhausted =
+          true;
 
-      // CRITICAL FIX:
-      // Once Gemini quota is exhausted,
-      // never call Gemini again during this bulk run.
-      if (isRateLimitError(error)) {
-        state.geminiQuotaExhausted = true;
-
-        console.log(
-          '[AI] Gemini quota exhausted.'
-        );
-
-        console.log(
-          '[AI] Switching remaining reviews directly to Groq.'
-        );
+        blockGeminiQuota();
       }
     }
+  } else {
+    console.log(
+      '[AI] Gemini skipped — quota cooldown active'
+    );
   }
 
-  // ----------------------------------------------------------
-  // GROQ
-  // ----------------------------------------------------------
+  /*
+   * GROQ FALLBACK
+   *
+   * Immediate.
+   */
+
+  const prompt =
+    buildPrompt(
+      review,
+      aiProfile,
+      true
+    );
 
   try {
     console.log(
-      '[AI] Trying Groq...'
+      '[AI] Trying Groq fallback'
     );
 
-    const reply =
+    const rawReply =
       await askGroqSafe(prompt);
-
-    if (
-      !reply?.trim() ||
-      hasPlaceholder(reply)
-    ) {
-      throw new Error(
-        'Groq generated an invalid reply.'
-      );
-    }
 
     console.log(
       '[AI] SUCCESS: Groq'
     );
 
-    return {
-      reply: reply.trim(),
-      provider: 'Groq',
-      errors,
-    };
-  } catch (error) {
-    const message =
-      getErrorMessage(error);
+    const validation =
+      validateReply(
+        rawReply,
+        review
+      );
 
+    if (validation.valid) {
+      console.log(
+        '[AI] GROQ VALIDATED:',
+        validation.cleanedReply
+      );
+
+      return validation.cleanedReply;
+    }
+
+    throw new Error(
+      `Groq validation failed: ${validation.reason}`
+    );
+  } catch (error) {
     console.warn(
-      `[AI] Groq failed: ${message}`
+      '[AI] Groq failed:',
+      getErrorMessage(error)
     );
 
-    errors.push({
-      provider: 'Groq',
-      error: message,
-    });
+    throw error;
+  }
+}
+
+/* ============================================================
+   PROCESS ONE REVIEW
+   ============================================================ */
+
+async function processReview(
+  review,
+  aiState,
+  profileCache
+) {
+  console.log(
+    `[Bulk AI] Processing review ${review.id}`
+  );
+
+  if (
+    review.status === 'REPLIED'
+  ) {
+    return {
+      success: false,
+      id: review.id,
+      error:
+        'Review is already REPLIED.',
+    };
   }
 
-  // ----------------------------------------------------------
-  // OLLAMA
-  // ----------------------------------------------------------
-
   try {
-    console.log(
-      '[AI] Trying Ollama...'
-    );
-
     const reply =
-      await askOllama(prompt);
+      await generateReviewReply(
+        review,
+        aiState,
+        profileCache
+      );
+
+    const finalValidation =
+      validateReply(
+        reply,
+        review
+      );
 
     if (
-      !reply?.trim() ||
-      hasPlaceholder(reply)
+      !finalValidation.valid
     ) {
       throw new Error(
-        'Ollama generated an invalid reply.'
+        `Final validation failed: ${finalValidation.reason}`
       );
     }
 
+    await db.review.update({
+      where: {
+        id: review.id,
+      },
+
+      data: {
+        aiReply:
+          finalValidation.cleanedReply,
+
+        status: 'GENERATED',
+      },
+    });
+
     console.log(
-      '[AI] SUCCESS: Ollama'
+      '[Bulk AI] DATABASE SAVED:',
+      review.id
     );
 
     return {
-      reply: reply.trim(),
-      provider: 'Ollama',
-      errors,
+      success: true,
+      id: review.id,
+      reply:
+        finalValidation.cleanedReply,
     };
   } catch (error) {
-    const message =
-      getErrorMessage(error);
-
     console.warn(
-      `[AI] Ollama failed: ${message}`
+      `[Bulk AI] FAILED ${review.id}:`,
+      getErrorMessage(error)
     );
 
-    errors.push({
-      provider: 'Ollama',
-      error: message,
-    });
+    return {
+      success: false,
+      id: review.id,
+      error:
+        getErrorMessage(error),
+    };
   }
-
-  throw new Error(
-    `All AI providers failed: ${JSON.stringify(
-      errors
-    )}`
-  );
 }
 
-// ============================================================
-// POST /api/reviews/generate-all
-// ============================================================
+/* ============================================================
+   CONCURRENT PROCESSOR
+   ============================================================ */
 
-export async function POST(req) {
+async function processInBatches(
+  candidates,
+  aiState,
+  profileCache
+) {
+  const results = [];
+
+  for (
+    let i = 0;
+    i < candidates.length;
+    i += CONCURRENCY
+  ) {
+    const batch =
+      candidates.slice(
+        i,
+        i + CONCURRENCY
+      );
+
+    console.log(
+      `[Bulk AI] Batch ${Math.floor(i / CONCURRENCY) + 1} — ${batch.length} reviews`
+    );
+
+    const batchResults =
+      await Promise.all(
+        batch.map((review) =>
+          processReview(
+            review,
+            aiState,
+            profileCache
+          )
+        )
+      );
+
+    results.push(
+      ...batchResults
+    );
+  }
+
+  return results;
+}
+
+/* ============================================================
+   POST
+   ============================================================ */
+
+export async function POST(
+  req
+) {
   try {
-    // --------------------------------------------------------
-    // REQUEST
-    // --------------------------------------------------------
+    let body = {};
 
-    const body =
-      await req
-        .json()
-        .catch(() => ({}));
+    try {
+      body = await req.json();
+    } catch {
+      body = {};
+    }
 
     const ids =
-      Array.isArray(body?.ids)
+      Array.isArray(body.ids)
         ? body.ids
         : [];
 
     const requestedLimit =
-      typeof body?.limit === 'number' &&
-      body.limit > 0
-        ? Math.floor(body.limit)
-        : null;
+      Number(body.limit) || null;
+
+    const regenerate =
+      Boolean(body.regenerate);
 
     const hasExplicitIds =
       ids.length > 0;
@@ -787,19 +1597,31 @@ export async function POST(req) {
       ids.length
     );
 
-    // --------------------------------------------------------
-    // GEMINI STATE FOR THIS BULK RUN
-    // --------------------------------------------------------
+    console.log(
+      '[Bulk AI] Regenerate mode:',
+      regenerate
+    );
 
+    /*
+     * IMPORTANT:
+     *
+     * Read the global Gemini state immediately.
+     */
     const aiState = {
-      geminiQuotaExhausted: false,
+      geminiQuotaExhausted:
+        isGeminiQuotaBlocked(),
     };
 
-    // --------------------------------------------------------
-    // DATABASE QUERY
-    // --------------------------------------------------------
+    console.log(
+      '[Bulk AI] Gemini blocked:',
+      aiState.geminiQuotaExhausted
+    );
 
     let candidates = [];
+
+    /* ========================================================
+       EXPLICIT IDS
+       ======================================================== */
 
     if (hasExplicitIds) {
       const uniqueIds = [
@@ -807,7 +1629,8 @@ export async function POST(req) {
           ids
             .filter(
               (id) =>
-                typeof id === 'string' &&
+                typeof id ===
+                  'string' &&
                 id.trim() !== ''
             )
             .map((id) =>
@@ -816,16 +1639,13 @@ export async function POST(req) {
         ),
       ];
 
-      if (
-        uniqueIds.length === 0
-      ) {
+      if (!uniqueIds.length) {
         return NextResponse.json({
           success: true,
-          message:
-            'No valid review IDs were supplied.',
           generated: 0,
           failed: 0,
           total: 0,
+          errors: [],
         });
       }
 
@@ -846,15 +1666,18 @@ export async function POST(req) {
             uniqueIds.length,
         });
     } else {
+      /* ======================================================
+         NORMAL BULK
+         ====================================================== */
+
       candidates =
         await db.review.findMany({
           where: {
             status: {
-              not: 'REPLIED',
-            },
-
-            shopId: {
-              not: null,
+              notIn: [
+                'GENERATED',
+                'REPLIED',
+              ],
             },
           },
 
@@ -871,197 +1694,60 @@ export async function POST(req) {
         });
     }
 
-    // --------------------------------------------------------
-    // FILTER
-    // --------------------------------------------------------
-
-    const reviewsToProcess =
-      candidates.filter(
-        isRegenerationCandidate
-      );
-
-    const total =
-      reviewsToProcess.length;
-
     console.log(
       '[Bulk AI] Candidates found:',
       candidates.length
     );
 
-    console.log(
-      '[Bulk AI] Reviews requiring generation:',
-      total
-    );
+    if (!candidates.length) {
+      console.log(
+        '[Bulk AI] No reviews require generation.'
+      );
 
-    // --------------------------------------------------------
-    // NOTHING TO GENERATE
-    // --------------------------------------------------------
-
-    if (total === 0) {
       return NextResponse.json({
         success: true,
-
-        message:
-          hasExplicitIds
-            ? 'None of the selected reviews require AI generation or regeneration.'
-            : 'No reviews require AI generation or regeneration.',
-
         generated: 0,
         failed: 0,
         total: 0,
+        errors: [],
       });
     }
 
-    // --------------------------------------------------------
-    // COUNTERS
-    // --------------------------------------------------------
+    /*
+     * Cache profiles during this request.
+     */
+    const profileCache =
+      new Map();
 
-    let generatedCount = 0;
-    let failedCount = 0;
-
-    const errors = [];
-
-    // --------------------------------------------------------
-    // PROCESS ONE BY ONE
-    // --------------------------------------------------------
-
-    for (
-      const review of reviewsToProcess
-    ) {
-      let success = false;
-      let lastError = null;
-
-      for (
-        let attempt = 1;
-        attempt <= MAX_RETRIES + 1;
-        attempt++
-      ) {
-        try {
-          console.log(
-            `[Bulk AI] Processing review ${review.id}, attempt ${attempt}`
-          );
-
-          const prompt =
-            buildPrompt(review);
-
-          const result =
-            await generateWithFallback(
-              prompt,
-              aiState
-            );
-
-          const cleanedReply =
-            result.reply;
-
-          const provider =
-            result.provider;
-
-          // --------------------------------------------------
-          // SAFETY CHECK
-          // --------------------------------------------------
-
-          if (
-            !cleanedReply ||
-            !cleanedReply.trim()
-          ) {
-            throw new Error(
-              'AI returned an empty response.'
-            );
-          }
-
-          if (
-            hasPlaceholder(
-              cleanedReply
-            )
-          ) {
-            throw new Error(
-              'AI generated a reply containing a placeholder.'
-            );
-          }
-
-          // --------------------------------------------------
-          // SAVE
-          // --------------------------------------------------
-
-          await db.review.update({
-            where: {
-              id: review.id,
-            },
-
-            data: {
-              aiReply:
-                cleanedReply,
-
-              status:
-                'GENERATED',
-            },
-          });
-
-          console.log(
-            `[Bulk AI] Review ${review.id} generated successfully using ${provider}.`
-          );
-
-          success = true;
-
-          break;
-        } catch (error) {
-          lastError =
-            getErrorMessage(error);
-
-          console.warn(
-            `[Bulk AI] Review ${review.id} attempt ${attempt} failed: ${lastError}`
-          );
-
-          // Retry ONLY temporary errors
-          if (
-            attempt <= MAX_RETRIES &&
-            isRetryableError(error)
-          ) {
-            const retryDelay =
-              RETRY_BASE_DELAY_MS *
-              attempt;
-
-            console.log(
-              `[Bulk AI] Retrying in ${retryDelay}ms...`
-            );
-
-            await delay(
-              retryDelay
-            );
-
-            continue;
-          }
-
-          break;
-        }
-      }
-
-      // --------------------------------------------------------
-      // RESULT
-      // --------------------------------------------------------
-
-      if (success) {
-        generatedCount++;
-      } else {
-        failedCount++;
-
-        errors.push({
-          id: review.id,
-
-          error:
-            lastError ||
-            'Unknown AI generation error.',
-        });
-      }
-
-      await delay(
-        REQUEST_DELAY_MS
+    /*
+     * FAST CONTROLLED PARALLEL PROCESSING
+     */
+    const results =
+      await processInBatches(
+        candidates,
+        aiState,
+        profileCache
       );
-    }
 
-    // --------------------------------------------------------
-    // FINAL
-    // --------------------------------------------------------
+    const generatedCount =
+      results.filter(
+        (result) =>
+          result.success
+      ).length;
+
+    const failedResults =
+      results.filter(
+        (result) =>
+          !result.success
+      );
+
+    const errors =
+      failedResults.map(
+        (result) => ({
+          id: result.id,
+          error: result.error,
+        })
+      );
 
     console.log(
       '================================================'
@@ -1078,12 +1764,12 @@ export async function POST(req) {
 
     console.log(
       '[Bulk AI] Failed:',
-      failedCount
+      failedResults.length
     );
 
     console.log(
       '[Bulk AI] Total:',
-      total
+      candidates.length
     );
 
     console.log(
@@ -1092,55 +1778,37 @@ export async function POST(req) {
     );
 
     console.log(
+      '[Bulk AI] Gemini cooldown active:',
+      isGeminiQuotaBlocked()
+    );
+
+    console.log(
       '================================================'
     );
 
     return NextResponse.json({
-      success:
-        failedCount === 0,
-
+      success: true,
       generated:
         generatedCount,
-
       failed:
-        failedCount,
-
-      total,
-
-      errors:
-        errors.length > 0
-          ? errors
-          : undefined,
-
-      message:
-        `Generated ${generatedCount} selected AI replies${
-          failedCount > 0
-            ? `, ${failedCount} failed`
-            : ''
-        }.`,
+        failedResults.length,
+      total:
+        candidates.length,
+      errors,
+      geminiQuotaExhausted:
+        aiState.geminiQuotaExhausted,
     });
   } catch (error) {
-    const message =
-      getErrorMessage(error);
-
     console.error(
-      '[Generate-All Top-Level Error]:',
-      message
+      '[Bulk AI] FATAL ERROR:',
+      getErrorMessage(error)
     );
 
     return NextResponse.json(
       {
         success: false,
-
-        generated: 0,
-
-        failed: 0,
-
-        total: 0,
-
         error:
-          message ||
-          'Internal server error.',
+          getErrorMessage(error),
       },
       {
         status: 500,

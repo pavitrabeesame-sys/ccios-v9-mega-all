@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAuthURL } from "../../../../src/services/shopee/AuthService";
 
+export const dynamic = 'force-dynamic';
 export async function GET() {
 
   try {

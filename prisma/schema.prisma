@@ -30,7 +30,7 @@ model User {
 }
 
 model ShopeeAccount {
-  id              String   @id @default(uuid())
+  id              String   @id @default(cuid())
   shopId          BigInt   @unique
   accessToken     String
   refreshToken    String
@@ -38,10 +38,10 @@ model ShopeeAccount {
   updatedAt       DateTime @updatedAt
   createdAt       DateTime @default(now())
   brandId         String?
+  reviewCursor    String?
   nextReviewPage  Int      @default(1)
   reviewSyncDone  Boolean  @default(false)
-
-  Brand           Brand?   @relation(fields: [brandId], references: [id])
+  brand            Brand?   @relation(fields: [brandId], references: [id])
 }
 
 model LazadaAccount {
@@ -123,7 +123,6 @@ model Review {
   id           String       @id @default(uuid())
   reviewId     String       @unique
   marketplace  Marketplace
-  shopId       BigInt?
   storeName    String
   orderNumber  String?
   productName  String?
@@ -151,6 +150,7 @@ model Review {
   videoUrls    String[]
   modelName    String?
   productImage String?
+  shopId       BigInt?
 }
 
 model Company {
