@@ -1,6 +1,9 @@
 ﻿import { NextResponse } from 'next/server';
 import { prisma } from '../../../lib/prisma';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function GET() {
   try {
     const reviews = await prisma.review.findMany({
@@ -10,30 +13,57 @@ export async function GET() {
           not: 'REPLIED',
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
 
-    // Convert BigInt fields (shopId) so NextResponse can serialize them.
     const serializedReviews = reviews.map((review) => ({
-      ...review,
+      id: review.id,
+      reviewId: review.reviewId,
+      productName: review.productName,
+      productSku: review.productSku,
+      customerName: review.customerName,
+      storeName: review.storeName,
+      rating: review.rating,
+      reviewText: review.reviewText,
+      status: review.status,
+      marketplace: review.marketplace,
+      brand: review.brand,
+      aiReply: review.aiReply,
       shopId:
         review.shopId !== null
           ? review.shopId.toString()
           : null,
+      createdAt: review.createdAt,
+      updatedAt: review.updatedAt,
     }));
 
-    return NextResponse.json(serializedReviews);
+    return NextResponse.json(serializedReviews, {
+      headers: {
+        'Cache-Control':
+          'no-store, no-cache, must-revalidate, proxy-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+      },
+    });
   } catch (error: any) {
-    console.error('API Error fetching reviews:', error);
+    console.error(
+      '[Reviews API] Error fetching reviews:',
+      error
+    );
 
     return NextResponse.json(
       {
         error:
-          error.message ||
+          error?.message ||
           'Failed to fetch reviews',
       },
       {
         status: 500,
+        headers: {
+          'Cache-Control': 'no-store',
+        },
       }
     );
   }
