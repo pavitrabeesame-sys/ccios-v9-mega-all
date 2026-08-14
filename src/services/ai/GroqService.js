@@ -20,7 +20,7 @@ const GEMINI_MODEL =
 
 const GROQ_MODEL =
   process.env.GROQ_MODEL ||
-  "llama-3.1-8b-instant";
+  "openai/gpt-oss-20b";
 
 const OLLAMA_MODEL =
   process.env.OLLAMA_MODEL ||
@@ -636,7 +636,7 @@ export async function askGroq(
 
   /*
    |--------------------------------------------------------------------------
-   | 2. GROQ 8B
+   | 2. GROQ GPT-OSS 20B
    |--------------------------------------------------------------------------
    */
 
@@ -652,8 +652,8 @@ export async function askGroq(
 
     if (reply) {
       console.log(
-        `[AI] Groq 8B succeeded`
-      );
+  `[AI] Groq GPT-OSS 20B succeeded`
+);
 
       return reply;
     }
@@ -705,6 +705,6 @@ export async function askGroq(
    */
 
   throw new Error(
-    "All AI providers failed: Gemini, Groq 8B, and Ollama."
+    "All AI providers failed: Gemini, Groq GPT-OSS 20B, and Ollama."
   );
 }
