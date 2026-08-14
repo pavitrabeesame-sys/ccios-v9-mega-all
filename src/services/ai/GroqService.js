@@ -16,7 +16,7 @@ const OLLAMA_API_URL =
 
 const GEMINI_MODEL =
   process.env.GEMINI_MODEL ||
-  "gemini-2.5-flash";
+  "gemini-2.5-flash-lite";
 
 const GROQ_MODEL =
   process.env.GROQ_MODEL ||
@@ -203,8 +203,8 @@ async function askGemini(
     );
   }
 
-  const url =
-  `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  // FIXED: No template literals here. Pure string addition to avoid markdown bugs.
+  const url = GEMINI_API_URL + "/" + GEMINI_MODEL + ":generateContent?key=" + encodeURIComponent(apiKey);
 
   const timeout =
     createTimeoutSignal(

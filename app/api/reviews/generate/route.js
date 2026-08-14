@@ -392,10 +392,8 @@ async function askGemini(prompt) {
     );
   }
 
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`;
+  // FIXED: No template literals to avoid markdown-link bugs
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + encodeURIComponent(apiKey);
 
   const response = await fetch(url, {
     method: "POST",
