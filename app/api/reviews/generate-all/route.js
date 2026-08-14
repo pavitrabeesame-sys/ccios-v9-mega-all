@@ -363,88 +363,6 @@ function getNoCommentTemplate(
 }
 
 /* ============================================================
-   STOP WORDS
-   ============================================================ */
-
-const STOP_WORDS =
-  new Set([
-    'the',
-    'and',
-    'for',
-    'with',
-    'that',
-    'this',
-    'very',
-    'good',
-    'great',
-    'nice',
-    'item',
-    'product',
-    'really',
-    'was',
-    'are',
-    'is',
-    'it',
-    'to',
-    'of',
-    'a',
-    'an',
-    'in',
-    'on',
-    'my',
-    'i',
-    'we',
-    'you',
-    'your',
-    'our',
-    'so',
-    'as',
-    'at',
-    'from',
-    'be',
-    'have',
-    'had',
-    'has',
-    'easy',
-    'quality',
-  ]);
-
-/* ============================================================
-   REVIEW TERMS
-   ============================================================ */
-
-function extractReviewTerms(
-  reviewText
-) {
-  const normalized =
-    String(reviewText || '')
-      .toLowerCase()
-      .replace(
-        /[^\p{L}\p{N}\s]/gu,
-        ' '
-      );
-
-  return normalized
-    .split(/\s+/)
-    .map(
-      (word) =>
-        word.trim()
-    )
-    .filter(Boolean)
-    .filter(
-      (word) =>
-        word.length >= 4
-    )
-    .filter(
-      (word) =>
-        !STOP_WORDS.has(
-          word
-        )
-    )
-    .slice(0, 12);
-}
-
-/* ============================================================
    GENERIC REVIEW CHECK
    ============================================================ */
 
@@ -491,8 +409,7 @@ function isGenericRatingOnlyReply(
     );
 
   for (
-    const pattern of
-      genericPatterns
+    const pattern of genericPatterns
   ) {
     const patternCompact =
       pattern
@@ -555,14 +472,17 @@ function validateReviewSpecificity(
   /*
    * IMPORTANT:
    *
-   * We do NOT require exact keyword matching.
+   * Do NOT require exact keyword matching.
    *
-   * Gemini may say:
+   * Example:
    *
-   * Customer: "nice material"
-   * AI: "glad you enjoyed the quality"
+   * Customer:
+   * "Nice material"
    *
-   * That is a valid natural response.
+   * AI:
+   * "We're glad you enjoyed the quality."
+   *
+   * This is a valid natural response.
    */
 
   return {
@@ -635,6 +555,80 @@ function countEmojis(text) {
 }
 
 /* ============================================================
+   BRAND MENTION
+   ============================================================ */
+
+function ensureBrandMention(
+  reply,
+  brandName
+) {
+  let cleaned =
+    String(reply || '').trim();
+
+  if (
+    !cleaned ||
+    !brandName
+  ) {
+    return cleaned;
+  }
+
+  /*
+   * Already contains brand.
+   */
+  if (
+    cleaned
+      .toLowerCase()
+      .includes(
+        brandName.toLowerCase()
+      )
+  ) {
+    return cleaned;
+  }
+
+  /*
+   * Avoid awkward:
+   *
+   * Thank you so much for...
+   *
+   * becoming:
+   *
+   * Thank you for choosing Brand so much for...
+   */
+
+  if (
+    /^thank you so much\b/i.test(
+      cleaned
+    )
+  ) {
+    return cleaned.replace(
+      /^thank you so much\b/i,
+      `Thank you so much from ${brandName}`
+    );
+  }
+
+  /*
+   * Normal thank-you opening.
+   */
+
+  if (
+    /^thank you\b/i.test(
+      cleaned
+    )
+  ) {
+    return cleaned.replace(
+      /^thank you\b/i,
+      `Thank you from ${brandName}`
+    );
+  }
+
+  /*
+   * Otherwise prepend naturally.
+   */
+
+  return `Thank you for choosing ${brandName}! ${cleaned}`;
+}
+
+/* ============================================================
    VALIDATION GATE
    ============================================================ */
 
@@ -664,6 +658,10 @@ function validateReply(
     };
   }
 
+  /*
+   * MARKDOWN CHECK
+   */
+
   if (
     cleaned.includes('```') ||
     cleaned.includes('**') ||
@@ -678,8 +676,6 @@ function validateReply(
 
   /*
    * BRAND NAME
-   *
-   * Only ONE declaration.
    */
 
   const brandName =
@@ -689,14 +685,12 @@ function validateReply(
     );
 
   /*
-   * Reject:
+   * Reject brand headers.
+   *
+   * Example:
    *
    * Nicole Collection:
-   * RAV Design:
-   * etc.
-   *
-   * Brand must be naturally inside
-   * the sentence.
+   * Thank you...
    */
 
   const escapedBrand =
@@ -726,28 +720,21 @@ function validateReply(
   }
 
   /*
-   * BRAND MUST BE PRESENT
+   * IMPORTANT:
+   *
+   * If AI forgets the brand,
+   * repair the response instead
+   * of rejecting it.
    */
 
-  if (
-    !cleaned
-      .toLowerCase()
-      .includes(
-        brandName.toLowerCase()
-      )
-  ) {
-    return {
-      valid: false,
-      reason:
-        `Reply must mention the brand "${brandName}".`,
-    };
-  }
+  cleaned =
+    ensureBrandMention(
+      cleaned,
+      brandName
+    );
 
   /*
    * EMOJI
-   *
-   * If AI forgets emoji,
-   * automatically add one.
    */
 
   if (
@@ -823,9 +810,6 @@ function validateReply(
 
   /*
    * DYNAMIC WORD LENGTH
-   *
-   * We don't force every reply
-   * to have exactly the same length.
    */
 
   const wordCount =
@@ -843,8 +827,8 @@ function validateReply(
       .filter(Boolean);
 
   /*
-   * Detailed customer review:
-   * don't allow an extremely short reply.
+   * Detailed review:
+   * prevent an extremely short reply.
    */
 
   if (
@@ -859,7 +843,7 @@ function validateReply(
   }
 
   /*
-   * INCOMPLETE ENDING
+   * INCOMPLETE ENDING CHECK
    */
 
   const words =
@@ -1019,7 +1003,9 @@ async function loadBrandProfile(
   } catch (error) {
     console.warn(
       '[AI] Unable to load brand AI profile:',
-      getErrorMessage(error)
+      getErrorMessage(
+        error
+      )
     );
 
     cache.set(
@@ -1347,8 +1333,7 @@ async function askGemini(
   }
 
   /*
-   * IMPORTANT:
-   * Correct Gemini URL.
+   * CORRECT GEMINI URL
    */
 
   const url =
@@ -1381,6 +1366,7 @@ You are CCIOS Review Intelligence.
 Write natural ecommerce customer review replies.
 
 For written reviews:
+
 - Address the customer's actual words.
 - Naturally mention the exact brand name provided.
 - Never use the brand as a header.
@@ -1388,7 +1374,7 @@ For written reviews:
 - Return only the customer-facing reply.
 - No headings.
 - No markdown.
-- Use 1-2 natural emojis.
+- Use 1–2 natural emojis.
 - Keep replies short.
 - Use complete sentences.
 - No explanations.
