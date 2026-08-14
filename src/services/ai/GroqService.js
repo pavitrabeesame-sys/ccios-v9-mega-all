@@ -204,7 +204,7 @@ async function askGemini(
   }
 
   const url =
-    `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
   const timeout =
     createTimeoutSignal(
