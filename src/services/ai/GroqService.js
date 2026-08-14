@@ -12,19 +12,18 @@ const OLLAMA_API_URL =
 |--------------------------------------------------------------------------
 | MODELS
 |--------------------------------------------------------------------------
+| We use String().trim().replace() to forcefully strip hidden 
+| Windows carriage returns (\r) or quotes from .env variables.
 */
 
 const GEMINI_MODEL =
-  process.env.GEMINI_MODEL ||
-  "gemini-2.5-flash-lite";
+  String(process.env.GEMINI_MODEL || "gemini-2.5-flash-lite").trim().replace(/['"]/g, "");
 
 const GROQ_MODEL =
-  process.env.GROQ_MODEL ||
-  "openai/gpt-oss-20b";
+  String(process.env.GROQ_MODEL || "llama-3.3-70b-versatile").trim().replace(/['"]/g, "");
 
 const OLLAMA_MODEL =
-  process.env.OLLAMA_MODEL ||
-  "llama3.2:3b";
+  String(process.env.OLLAMA_MODEL || "llama3.2:3b").trim().replace(/['"]/g, "");
 
 /*
 |--------------------------------------------------------------------------
@@ -195,7 +194,7 @@ async function askGemini(
   prompt
 ) {
   const apiKey =
-    process.env.GEMINI_API_KEY;
+    String(process.env.GEMINI_API_KEY || "").trim().replace(/['"]/g, "");
 
   if (!apiKey) {
     throw new Error(
@@ -334,7 +333,7 @@ async function askGroqFallback(
   prompt
 ) {
   const apiKey =
-    process.env.GROQ_API_KEY;
+    String(process.env.GROQ_API_KEY || "").trim().replace(/['"]/g, "");
 
   if (!apiKey) {
     throw new Error(
@@ -614,40 +613,40 @@ export async function askGroq(
    */
 
   if (!skipGemini) {
-  try {
-    console.log(
-      `[AI] Trying Gemini ${GEMINI_MODEL}`
-    );
-
-    const reply =
-      await askGemini(
-        cleanPrompt
-      );
-
-    if (reply) {
+    try {
       console.log(
-        '[AI] Gemini succeeded'
+        `[AI] Trying Gemini ${GEMINI_MODEL}`
       );
 
-      return reply;
+      const reply =
+        await askGemini(
+          cleanPrompt
+        );
+
+      if (reply) {
+        console.log(
+          '[AI] Gemini succeeded'
+        );
+
+        return reply;
+      }
+    } catch (error) {
+      console.warn(
+        '[AI] Gemini failed:',
+        error?.message ||
+          String(error)
+      );
     }
-  } catch (error) {
-    console.warn(
-      '[AI] Gemini failed:',
-      error?.message ||
-        String(error)
+  } else {
+    console.log(
+      '[AI] Gemini skipped — direct Groq fallback requested'
     );
   }
-} else {
-  console.log(
-    '[AI] Gemini skipped — direct Groq fallback requested'
-  );
-}
 
 
   /*
    |--------------------------------------------------------------------------
-   | 2. GROQ GPT-OSS 20B
+   | 2. GROQ 
    |--------------------------------------------------------------------------
    */
 
@@ -663,8 +662,8 @@ export async function askGroq(
 
     if (reply) {
       console.log(
-  `[AI] Groq GPT-OSS 20B succeeded`
-);
+        `[AI] Groq succeeded`
+      );
 
       return reply;
     }
@@ -683,28 +682,34 @@ export async function askGroq(
    |--------------------------------------------------------------------------
    */
 
-  try {
-    console.log(
-      `[AI] Trying Ollama ${OLLAMA_MODEL}`
-    );
-
-    const reply =
-      await askOllama(
-        cleanPrompt
-      );
-
-    if (reply) {
+  if (process.env.VERCEL !== "1" && process.env.NODE_ENV !== "production") {
+    try {
       console.log(
-        `[AI] Ollama succeeded`
+        `[AI] Trying Ollama ${OLLAMA_MODEL}`
       );
 
-      return reply;
+      const reply =
+        await askOllama(
+          cleanPrompt
+        );
+
+      if (reply) {
+        console.log(
+          `[AI] Ollama succeeded`
+        );
+
+        return reply;
+      }
+    } catch (error) {
+      console.warn(
+        `[AI] Ollama unavailable:`,
+        error?.message ||
+          String(error)
+      );
     }
-  } catch (error) {
-    console.warn(
-      `[AI] Ollama unavailable:`,
-      error?.message ||
-        String(error)
+  } else {
+    console.log(
+      '[AI] Ollama skipped — running in production/Vercel environment'
     );
   }
 
@@ -716,6 +721,6 @@ export async function askGroq(
    */
 
   throw new Error(
-    "All AI providers failed: Gemini, Groq GPT-OSS 20B, and Ollama."
+    "All AI providers failed: Gemini, Groq, and Ollama."
   );
 }
