@@ -184,17 +184,29 @@ function isGenericRatingOnlyReply(reply, reviewText) {
 }
 
 function validateReviewSpecificity(reply, reviewText) {
-  if (!reviewText || !String(reviewText).trim()) return { valid: true, reason: 'No written review; specificity check not required.' };
-  if (isGenericRatingOnlyReply(reply, reviewText)) return { valid: false, reason: 'Generic rating-only response detected for a written review.' };
+  if (!reviewText || !String(reviewText).trim()) {
+    return { valid: true, reason: 'No written review; specificity check not required.' };
+  }
+
+  if (isGenericRatingOnlyReply(reply, reviewText)) {
+    return { valid: false, reason: 'Generic rating-only response detected for a written review.' };
+  }
 
   const reviewTerms = extractReviewTerms(reviewText);
-  if (!reviewTerms.length) return { valid: true, reason: 'No strong lexical terms available.' };
+  if (!reviewTerms.length) {
+    return { valid: true, reason: 'No strong lexical terms available.' };
+  }
 
   const replyLower = String(reply).toLowerCase();
   const matchedTerms = reviewTerms.filter((term) => replyLower.includes(term));
-  const requiredMatches = reviewTerms.length >= 5 ? 2 : 1;
+  
+  // FIXED: Only require 1 match regardless of review length to account for natural synonyms
+  const requiredMatches = 1;
 
-  if (matchedTerms.length < requiredMatches) return { valid: false, reason: 'Reply does not address enough specific details from the customer review.' };
+  if (matchedTerms.length < requiredMatches) {
+    return { valid: false, reason: 'Reply does not address enough specific details from the customer review.' };
+  }
+
   return { valid: true, reason: `Matched review terms: ${matchedTerms.join(', ')}` };
 }
 
@@ -262,7 +274,7 @@ function validateReply(reply, review) {
     cleaned += '.';
   }
 
-  // DYNAMIC LENGTH CHECK (Replaces hard MIN_WORDS)
+  // DYNAMIC LENGTH CHECK
   if (cleaned.length < 20) {
     return { valid: false, reason: 'Reply is too short (under 20 characters).' };
   }
@@ -401,8 +413,7 @@ async function askGemini(prompt) {
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
   if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY') throw new Error('Gemini API key is not configured.');
 
-const url =
-  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const url = `[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){model}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -442,27 +453,63 @@ async function generateReviewReply(review, aiState, profileCache) {
 
   const aiProfile = await loadBrandProfile(review, profileCache);
 
+  /* ==========================================================
+     GEMINI FIRST & RETRY
+     ========================================================== */
+
   if (!aiState.geminiQuotaExhausted && !isGeminiQuotaBlocked()) {
     try {
       console.log('[AI] Trying Gemini');
       const prompt = buildPrompt(review, aiProfile, false);
       const rawReply = await askGemini(prompt);
+
       console.log('[AI] SUCCESS: Gemini');
 
-      const validation = validateReply(rawReply, review);
+      let validation = validateReply(rawReply, review);
+
       if (validation.valid) {
         console.log('[AI] GEMINI VALIDATED:', validation.cleanedReply);
         return validation.cleanedReply;
       }
+
       console.warn('[AI] Gemini validation failed:', validation.reason);
+
+      /*
+       * GEMINI RETRY
+       * Do not immediately fall back to Groq.
+       * Give Gemini one opportunity to correct the response.
+       */
+      console.log('[AI] Retrying Gemini with corrected instructions');
+
+      const retryPrompt = buildPrompt(review, aiProfile, true);
+      const retryReply = await askGemini(retryPrompt);
+
+      console.log('[AI] Gemini retry succeeded');
+
+      validation = validateReply(retryReply, review);
+
+      if (validation.valid) {
+        console.log('[AI] GEMINI RETRY VALIDATED:', validation.cleanedReply);
+        return validation.cleanedReply;
+      }
+
+      console.warn('[AI] Gemini retry validation failed:', validation.reason);
+
     } catch (error) {
       console.warn('[AI] Gemini failed:', getErrorMessage(error));
+
       if (isRateLimitError(error)) {
         aiState.geminiQuotaExhausted = true;
         blockGeminiQuota();
       }
     }
+  } else {
+    console.log('[AI] Gemini skipped — quota cooldown active');
   }
+
+  /* ==========================================================
+     GROQ FALLBACK
+     ========================================================== */
 
   try {
     console.log('[AI] Trying Groq fallback');
