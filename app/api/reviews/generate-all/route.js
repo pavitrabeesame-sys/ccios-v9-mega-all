@@ -10,11 +10,31 @@ export const maxDuration = 60;
 CCIOS — MASTER REVIEW AI GENERATION ENGINE
 ============================================================
 
-REVIEW REPLY STYLE
+REVIEW REPLY ENGINE
 
-- Brand name MUST appear naturally
-- Written reviews must address the actual review
-- Natural seller/customer-service tone
+FLOW:
+
+Gemini
+  ↓
+Validation
+  ↓
+Gemini Retry with exact correction reason
+  ↓
+Validation
+  ↓
+Groq fallback
+  ↓
+Validation
+  ↓
+Database
+
+CORE RULES:
+
+- Brand must appear naturally
+- Written reviews must address actual review
+- Detailed reviews must address 2 meaningful details
+- Correct customer language
+- Natural ecommerce seller tone
 - 1–2 short sentences
 - Short and human
 - 1–2 natural emojis
@@ -22,7 +42,8 @@ REVIEW REPLY STYLE
 - No headers
 - No hashtags
 - No generic rating-only replies
-- Gemini → Gemini retry → Groq fallback
+- No invented information
+- No automatic awkward brand injection
 - Gemini quota cooldown
 - Brand AI profiles
 - Controlled parallel processing
@@ -36,9 +57,11 @@ const GEMINI_QUOTA_COOLDOWN_MS =
 
 const CONCURRENCY = 3;
 
-/* ============================================================
-   GLOBAL GEMINI QUOTA STATE
-   ============================================================ */
+/*
+============================================================
+GLOBAL GEMINI QUOTA STATE
+============================================================
+*/
 
 const GLOBAL_STATE =
   globalThis.__CCIOS_GEMINI_STATE__ || {
@@ -54,17 +77,18 @@ function isGeminiQuotaBlocked() {
 
 function blockGeminiQuota() {
   GLOBAL_STATE.quotaUntil =
-    Date.now() +
-    GEMINI_QUOTA_COOLDOWN_MS;
+    Date.now() + GEMINI_QUOTA_COOLDOWN_MS;
 
   console.warn(
     '[AI] Gemini quota blocked for 24 hours.'
   );
 }
 
-/* ============================================================
-   HELPERS
-   ============================================================ */
+/*
+============================================================
+ERROR HELPERS
+============================================================
+*/
 
 function getErrorMessage(error) {
   if (!error) {
@@ -106,9 +130,11 @@ function isRateLimitError(error) {
   );
 }
 
-/* ============================================================
-   BRAND NORMALIZATION
-   ============================================================ */
+/*
+============================================================
+BRAND NORMALIZATION
+============================================================
+*/
 
 function normalizeBrand(rawBrand) {
   const value =
@@ -124,6 +150,9 @@ function normalizeBrand(rawBrand) {
       'Nicole Collection',
 
     'NICOLE COLLECTION':
+      'Nicole Collection',
+
+    'NICOLE OFFICIAL STORE':
       'Nicole Collection',
 
     'HUSH PUPPIES':
@@ -152,9 +181,11 @@ function normalizeBrand(rawBrand) {
   );
 }
 
-/* ============================================================
-   DEFAULT BRAND VOICES
-   ============================================================ */
+/*
+============================================================
+DEFAULT BRAND VOICES
+============================================================
+*/
 
 function getDefaultBrandVoice(brandName) {
   const voices = {
@@ -180,34 +211,79 @@ function getDefaultBrandVoice(brandName) {
   );
 }
 
-/* ============================================================
-   LANGUAGE
-   ============================================================ */
+/*
+============================================================
+LANGUAGE DETECTION
+============================================================
+*/
 
 function detectLanguage(text) {
   const value =
-    String(text || '');
+    String(text || '').trim();
 
+  if (!value) {
+    return 'English';
+  }
+
+  /*
+   * Chinese
+   */
   if (
     /[\u4e00-\u9fff]/.test(value)
   ) {
     return 'Simplified Chinese';
   }
 
+  /*
+   * Malaysian Malay
+   *
+   * We intentionally include common Shopee-style
+   * Malaysian Malay words.
+   */
   const malayWords = [
     'sangat',
     'cantik',
     'bagus',
-    'terima kasih',
+    'terima',
+    'kasih',
     'kualiti',
     'barang',
     'penghantaran',
+    'pengiriman',
     'cepat',
     'lambat',
     'sesuai',
     'puas',
     'harga',
     'boleh',
+    'kain',
+    'baju',
+    'kemas',
+    'murah',
+    'berbaloi',
+    'selesa',
+    'saiz',
+    'kecil',
+    'besar',
+    'tangan',
+    'servis',
+    'seller',
+    'penjual',
+    'sampai',
+    'parcel',
+    'bungkusan',
+    'rekaan',
+    'cantik',
+    'memang',
+    'dah',
+    'dengan',
+    'untuk',
+    'yang',
+    'dan',
+    'pun',
+    'juga',
+    'ok',
+    'baik',
   ];
 
   const lower =
@@ -226,9 +302,11 @@ function detectLanguage(text) {
   return 'English';
 }
 
-/* ============================================================
-   KNOWLEDGE BASE
-   ============================================================ */
+/*
+============================================================
+KNOWLEDGE BASE
+============================================================
+*/
 
 function filterRelevantKnowledge(
   knowledgeBase,
@@ -260,12 +338,14 @@ function filterRelevantKnowledge(
   if (
     text.includes('warranty') ||
     text.includes('guarantee') ||
-    text.includes('repair')
+    text.includes('repair') ||
+    text.includes('waranti')
   ) {
     keywords.push(
       'warranty',
       'guarantee',
-      'repair'
+      'repair',
+      'waranti'
     );
   }
 
@@ -275,12 +355,16 @@ function filterRelevantKnowledge(
     text.includes('tight') ||
     text.includes('big') ||
     text.includes('large') ||
-    text.includes('fit')
+    text.includes('fit') ||
+    text.includes('saiz') ||
+    text.includes('kecil') ||
+    text.includes('besar')
   ) {
     keywords.push(
       'size',
       'fitting',
-      'fit'
+      'fit',
+      'saiz'
     );
   }
 
@@ -288,12 +372,14 @@ function filterRelevantKnowledge(
     text.includes('return') ||
     text.includes('refund') ||
     text.includes('broken') ||
-    text.includes('damaged')
+    text.includes('damaged') ||
+    text.includes('rosak')
   ) {
     keywords.push(
       'return',
       'refund',
-      'damage'
+      'damage',
+      'rosak'
     );
   }
 
@@ -302,12 +388,15 @@ function filterRelevantKnowledge(
     text.includes('shipping') ||
     text.includes('delivery') ||
     text.includes('late') ||
-    text.includes('slow')
+    text.includes('slow') ||
+    text.includes('penghantaran') ||
+    text.includes('sampai')
   ) {
     keywords.push(
       'shipping',
       'delivery',
-      'sla'
+      'sla',
+      'penghantaran'
     );
   }
 
@@ -339,32 +428,36 @@ function filterRelevantKnowledge(
         .join('\n===\n');
 }
 
-/* ============================================================
-   NO COMMENT TEMPLATE
-   ============================================================ */
+/*
+============================================================
+NO COMMENT TEMPLATE
+============================================================
+*/
 
 function getNoCommentTemplate(
   brandName,
   rating
 ) {
   if (rating >= 5) {
-    return `Thank you for choosing ${brandName} and for your 5-star rating! We truly appreciate your support. 😊`;
+    return `Thank you for choosing ${brandName}! We truly appreciate your support. 😊`;
   }
 
   if (rating === 4) {
-    return `Thank you for choosing ${brandName} and for your 4-star rating! We really appreciate your support. 😊`;
+    return `Thank you for choosing ${brandName}! We really appreciate your support. 😊`;
   }
 
   if (rating === 3) {
-    return `Thank you for choosing ${brandName} and for your feedback. We appreciate your support and hope to serve you even better next time. 😊`;
+    return `Thank you for choosing ${brandName} and for your feedback. We hope to serve you even better next time. 😊`;
   }
 
-  return `Thank you for choosing ${brandName}. We are sorry your experience did not fully meet expectations and we are here to help. 🙏`;
+  return `Thank you for choosing ${brandName}. We are sorry your experience did not fully meet expectations. 🙏`;
 }
 
-/* ============================================================
-   GENERIC REVIEW CHECK
-   ============================================================ */
+/*
+============================================================
+GENERIC REVIEW CHECK
+============================================================
+*/
 
 function isGenericRatingOnlyReply(
   reply,
@@ -393,13 +486,13 @@ function isGenericRatingOnlyReply(
   const genericPatterns = [
     'thank you for your 5 star review',
     'thank you for your 5 star rating',
-    'thank you for your 5-star review',
-    'thank you for your 5-star rating',
     'thank you for your five star review',
     'thank you for your five star rating',
     'thank you for your rating',
     'thank you for the rating',
-    'thank you for the 5 star review',
+    'thank you for the review',
+    'thanks for your review',
+    'thanks for the review',
   ];
 
   const compact =
@@ -426,9 +519,7 @@ function isGenericRatingOnlyReply(
       compact.includes(
         patternCompact
       ) &&
-      normalized.split(
-        /\s+/
-      ).length <= 15
+      normalized.split(/\s+/).length <= 18
     ) {
       return true;
     }
@@ -437,9 +528,207 @@ function isGenericRatingOnlyReply(
   return false;
 }
 
-/* ============================================================
-   REVIEW SPECIFICITY
-   ============================================================ */
+/*
+============================================================
+REVIEW TOPICS
+============================================================
+*/
+
+const REVIEW_TOPICS = {
+  quality: [
+    'quality',
+    'kualiti',
+    'bagus',
+    'good',
+    'great',
+    'excellent',
+    'nice',
+    'berkualiti',
+    'baik',
+    'ok',
+  ],
+
+  fabric: [
+    'fabric',
+    'kain',
+    'material',
+    'bahan',
+    'cotton',
+    'leather',
+    'kulit',
+    'textile',
+  ],
+
+  design: [
+    'design',
+    'rekaan',
+    'style',
+    'stylish',
+    'cantik',
+    'kemas',
+    'look',
+    'rupa',
+    'fashion',
+    'elegant',
+  ],
+
+  fit: [
+    'fit',
+    'size',
+    'sizing',
+    'saiz',
+    'kecil',
+    'kecilkan',
+    'besarkan',
+    'besar',
+    'tight',
+    'loose',
+    'longgar',
+    'ketat',
+    'tangan',
+    'sleeve',
+    'alteration',
+    'alter',
+  ],
+
+  service: [
+    'service',
+    'servis',
+    'seller',
+    'penjual',
+    'staff',
+    'layanan',
+    'response',
+    'respon',
+    'customer service',
+  ],
+
+  delivery: [
+    'delivery',
+    'penghantaran',
+    'shipping',
+    'ship',
+    'sampai',
+    'courier',
+    'pos',
+    'parcel',
+    'cepat',
+    'lambat',
+    'arrived',
+    'arrival',
+  ],
+
+  price: [
+    'price',
+    'harga',
+    'murah',
+    'berbaloi',
+    'value',
+    'worth',
+    'berpatutan',
+    'affordable',
+  ],
+
+  packaging: [
+    'packaging',
+    'pembungkusan',
+    'package',
+    'bungkusan',
+    'kemas',
+    'packed',
+  ],
+
+  comfort: [
+    'comfort',
+    'comfortable',
+    'selesa',
+    'ringan',
+    'soft',
+    'lembut',
+    'wear',
+    'wearable',
+  ],
+};
+
+/*
+============================================================
+DETECT REVIEW TOPICS
+============================================================
+*/
+
+function detectReviewTopics(reviewText) {
+  const review =
+    String(reviewText || '')
+      .toLowerCase();
+
+  const detectedTopics = [];
+
+  for (
+    const [topic, keywords] of Object.entries(
+      REVIEW_TOPICS
+    )
+  ) {
+    const found =
+      keywords.some(
+        (keyword) =>
+          review.includes(
+            keyword
+          )
+      );
+
+    if (found) {
+      detectedTopics.push(topic);
+    }
+  }
+
+  return detectedTopics;
+}
+
+/*
+============================================================
+CHECK ADDRESSED TOPICS
+============================================================
+*/
+
+function getAddressedTopics(
+  reply,
+  detectedTopics
+) {
+  const response =
+    String(reply || '')
+      .toLowerCase();
+
+  const addressedTopics = [];
+
+  for (
+    const topic of detectedTopics
+  ) {
+    const keywords =
+      REVIEW_TOPICS[topic];
+
+    const addressed =
+      keywords.some(
+        (keyword) =>
+          response.includes(
+            keyword
+          )
+      );
+
+    if (addressed) {
+      addressedTopics.push(
+        topic
+      );
+    }
+  }
+
+  return addressedTopics;
+}
+
+/*
+============================================================
+REVIEW SPECIFICITY
+============================================================
+*/
 
 function validateReviewSpecificity(
   reply,
@@ -469,41 +758,92 @@ function validateReviewSpecificity(
     };
   }
 
+  const review =
+    String(reviewText)
+      .toLowerCase()
+      .trim();
+
+  const detectedTopics =
+    detectReviewTopics(
+      review
+    );
+
   /*
-   * IMPORTANT:
-   *
-   * Do NOT require exact keyword matching.
-   *
-   * Example:
-   *
-   * Customer:
-   * "Nice material"
-   *
-   * AI:
-   * "We're glad you enjoyed the quality."
-   *
-   * This is a valid natural response.
+   * If the language/topic is unknown,
+   * don't automatically reject.
    */
+  if (
+    !detectedTopics.length
+  ) {
+    return {
+      valid: true,
+      reason:
+        'No identifiable review topics; natural response accepted.',
+    };
+  }
+
+  const addressedTopics =
+    getAddressedTopics(
+      reply,
+      detectedTopics
+    );
+
+  const reviewWordCount =
+    review
+      .split(/\s+/)
+      .filter(Boolean)
+      .length;
+
+  /*
+   * Detailed review:
+   *
+   * 12+ words = 2 topics
+   *
+   * Short review = 1 topic
+   */
+  const requiredTopics =
+    reviewWordCount >= 12
+      ? Math.min(
+          2,
+          detectedTopics.length
+        )
+      : 1;
+
+  if (
+    addressedTopics.length <
+    requiredTopics
+  ) {
+    return {
+      valid: false,
+      reason:
+        `Reply addresses only ${addressedTopics.length} review topic(s), but ${requiredTopics} meaningful detail(s) are required. Review topics: ${detectedTopics.join(', ')}. Addressed: ${addressedTopics.join(', ') || 'none'}.`,
+    };
+  }
 
   return {
     valid: true,
     reason:
-      'Written review addressed by AI response.',
+      `Review topics addressed: ${addressedTopics.join(', ')}.`,
   };
 }
 
-/* ============================================================
-   CLEAN REPLY
-   ============================================================ */
+/*
+============================================================
+CLEAN REPLY
+============================================================
+*/
 
 function cleanReply(text) {
   let cleaned =
     String(text || '').trim();
 
+  /*
+   * Remove code fences.
+   */
   cleaned =
     cleaned
       .replace(
-        /^```\s*/i,
+        /^```(?:text|plaintext)?\s*/i,
         ''
       )
       .replace(
@@ -512,6 +852,9 @@ function cleanReply(text) {
       )
       .trim();
 
+  /*
+   * Remove accidental quotation marks.
+   */
   cleaned =
     cleaned
       .replace(
@@ -524,18 +867,43 @@ function cleanReply(text) {
       )
       .trim();
 
+  /*
+   * Remove accidental prefixes.
+   */
   cleaned =
     cleaned.replace(
-      /^(reply|response|customer reply|ai reply)\s*:\s*/i,
+      /^(reply|response|customer reply|ai reply|final reply|final response)\s*:\s*/i,
       ''
     );
 
-  return cleaned.trim();
+  /*
+   * Remove accidental "AI Generated:".
+   */
+  cleaned =
+    cleaned.replace(
+      /^ai generated\s*:\s*/i,
+      ''
+    );
+
+  /*
+   * Normalize whitespace.
+   */
+  cleaned =
+    cleaned
+      .replace(
+        /\s+/g,
+        ' '
+      )
+      .trim();
+
+  return cleaned;
 }
 
-/* ============================================================
-   EMOJI
-   ============================================================ */
+/*
+============================================================
+EMOJI
+============================================================
+*/
 
 function containsEmoji(text) {
   return /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(
@@ -545,7 +913,7 @@ function containsEmoji(text) {
 
 function countEmojis(text) {
   const matches =
-    text.match(
+    String(text || '').match(
       /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu
     );
 
@@ -554,83 +922,59 @@ function countEmojis(text) {
     : 0;
 }
 
-/* ============================================================
-   BRAND MENTION
-   ============================================================ */
+/*
+============================================================
+BRAND CHECK
+============================================================
+*/
 
-function ensureBrandMention(
+function containsBrand(
   reply,
   brandName
 ) {
-  let cleaned =
-    String(reply || '').trim();
-
-  if (
-    !cleaned ||
-    !brandName
-  ) {
-    return cleaned;
-  }
-
-  /*
-   * Already contains brand.
-   */
-  if (
-    cleaned
-      .toLowerCase()
-      .includes(
-        brandName.toLowerCase()
-      )
-  ) {
-    return cleaned;
-  }
-
-  /*
-   * Avoid awkward:
-   *
-   * Thank you so much for...
-   *
-   * becoming:
-   *
-   * Thank you for choosing Brand so much for...
-   */
-
-  if (
-    /^thank you so much\b/i.test(
-      cleaned
-    )
-  ) {
-    return cleaned.replace(
-      /^thank you so much\b/i,
-      `Thank you so much from ${brandName}`
+  return String(reply || '')
+    .toLowerCase()
+    .includes(
+      String(brandName || '')
+        .toLowerCase()
     );
-  }
-
-  /*
-   * Normal thank-you opening.
-   */
-
-  if (
-    /^thank you\b/i.test(
-      cleaned
-    )
-  ) {
-    return cleaned.replace(
-      /^thank you\b/i,
-      `Thank you from ${brandName}`
-    );
-  }
-
-  /*
-   * Otherwise prepend naturally.
-   */
-
-  return `Thank you for choosing ${brandName}! ${cleaned}`;
 }
 
-/* ============================================================
-   VALIDATION GATE
-   ============================================================ */
+/*
+============================================================
+BRAND HEADER CHECK
+============================================================
+*/
+
+function isBrandHeader(
+  reply,
+  brandName
+) {
+  const escapedBrand =
+    String(brandName || '')
+      .replace(
+        /[.*+?^${}()|[\]\\]/g,
+        '\\$&'
+      );
+
+  const regex =
+    new RegExp(
+      '^' +
+        escapedBrand +
+        '\\s*[:\\-]\\s*',
+      'i'
+    );
+
+  return regex.test(
+    String(reply || '').trim()
+  );
+}
+
+/*
+============================================================
+VALIDATION GATE
+============================================================
+*/
 
 function validateReply(
   reply,
@@ -659,9 +1003,8 @@ function validateReply(
   }
 
   /*
-   * MARKDOWN CHECK
+   * Markdown
    */
-
   if (
     cleaned.includes('```') ||
     cleaned.includes('**') ||
@@ -675,41 +1018,18 @@ function validateReply(
   }
 
   /*
-   * BRAND NAME
+   * Brand
    */
-
   const brandName =
     normalizeBrand(
       review?.brand ||
         review?.storeName
     );
 
-  /*
-   * Reject brand headers.
-   *
-   * Example:
-   *
-   * Nicole Collection:
-   * Thank you...
-   */
-
-  const escapedBrand =
-    brandName.replace(
-      /[.*+?^${}()|[\]\\]/g,
-      '\\$&'
-    );
-
-  const brandHeaderRegex =
-    new RegExp(
-      '^' +
-        escapedBrand +
-        '\\s*[:\\-]\\s*',
-      'i'
-    );
-
   if (
-    brandHeaderRegex.test(
-      cleaned
+    isBrandHeader(
+      cleaned,
+      brandName
     )
   ) {
     return {
@@ -722,21 +1042,27 @@ function validateReply(
   /*
    * IMPORTANT:
    *
-   * If AI forgets the brand,
-   * repair the response instead
-   * of rejecting it.
+   * We DO NOT automatically insert
+   * the brand anymore.
+   *
+   * Gemini/Groq must write it naturally.
    */
-
-  cleaned =
-    ensureBrandMention(
+  if (
+    !containsBrand(
       cleaned,
       brandName
-    );
+    )
+  ) {
+    return {
+      valid: false,
+      reason:
+        `Reply must naturally mention the brand "${brandName}".`,
+    };
+  }
 
   /*
-   * EMOJI
+   * Emoji
    */
-
   if (
     !containsEmoji(cleaned)
   ) {
@@ -755,9 +1081,8 @@ function validateReply(
   }
 
   /*
-   * PUNCTUATION
+   * Punctuation
    */
-
   const emojiRegex =
     /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+$/u;
 
@@ -784,7 +1109,7 @@ function validateReply(
       )
     ) {
       cleaned =
-        `${textWithoutEmoji}.${emoji}`;
+        `${textWithoutEmoji}. ${emoji}`;
     }
   } else if (
     !/[.!?。！？]$/.test(
@@ -795,23 +1120,21 @@ function validateReply(
   }
 
   /*
-   * MINIMUM LENGTH
+   * Minimum length
    */
-
   if (
-    cleaned.length < 20
+    cleaned.length < 25
   ) {
     return {
       valid: false,
       reason:
-        'Reply is too short (under 20 characters).',
+        'Reply is too short.',
     };
   }
 
   /*
-   * DYNAMIC WORD LENGTH
+   * Word count
    */
-
   const wordCount =
     cleaned
       .split(/\s+/)
@@ -827,10 +1150,9 @@ function validateReply(
       .filter(Boolean);
 
   /*
-   * Detailed review:
-   * prevent an extremely short reply.
+   * Detailed review cannot receive
+   * an ultra-short response.
    */
-
   if (
     reviewWords.length >= 8 &&
     wordCount < 8
@@ -843,9 +1165,8 @@ function validateReply(
   }
 
   /*
-   * INCOMPLETE ENDING CHECK
+   * Incomplete ending
    */
-
   const words =
     cleaned
       .toLowerCase()
@@ -882,6 +1203,14 @@ function validateReply(
       'are',
       'of',
       'with',
+      'u',
+      'atas',
+      'yang',
+      'dan',
+      'untuk',
+      'dengan',
+      'kerana',
+      'kerana',
     ]);
 
   if (
@@ -897,9 +1226,39 @@ function validateReply(
   }
 
   /*
-   * WRITTEN REVIEW CHECK
+   * Suspicious unfinished Malay fragments.
    */
+  const suspiciousFragments = [
+    'atas u',
+    'terima kasih atas u',
+    'terima kasih atas',
+    'kami gembira atas',
+    'kami hargai atas',
+    'terima kasih untuk',
+  ];
 
+  const lowerCleaned =
+    cleaned.toLowerCase();
+
+  for (
+    const fragment of suspiciousFragments
+  ) {
+    if (
+      lowerCleaned.includes(
+        fragment
+      )
+    ) {
+      return {
+        valid: false,
+        reason:
+          `Unnatural/incomplete phrase detected: "${fragment}".`,
+      };
+    }
+  }
+
+  /*
+   * Written review specificity
+   */
   const specificity =
     validateReviewSpecificity(
       cleaned,
@@ -917,15 +1276,13 @@ function validateReply(
   }
 
   /*
-   * FINAL BRAND CHECK
+   * Final brand check
    */
-
   if (
-    !cleaned
-      .toLowerCase()
-      .includes(
-        brandName.toLowerCase()
-      )
+    !containsBrand(
+      cleaned,
+      brandName
+    )
   ) {
     return {
       valid: false,
@@ -943,9 +1300,11 @@ function validateReply(
   };
 }
 
-/* ============================================================
-   BRAND PROFILE CACHE
-   ============================================================ */
+/*
+============================================================
+BRAND PROFILE CACHE
+============================================================
+*/
 
 async function loadBrandProfile(
   review,
@@ -974,7 +1333,15 @@ async function loadBrandProfile(
   }
 
   try {
-    const brand =
+    /*
+     * First try exact normalized database brand.
+     */
+    const normalized =
+      normalizeBrand(
+        rawBrand
+      );
+
+    let brand =
       await db.brand.findFirst({
         where: {
           name: {
@@ -984,11 +1351,34 @@ async function loadBrandProfile(
               'insensitive',
           },
         },
-
         include: {
           AIProfile: true,
         },
       });
+
+    /*
+     * If raw store name did not match,
+     * try normalized brand.
+     */
+    if (
+      !brand &&
+      normalized !== rawBrand
+    ) {
+      brand =
+        await db.brand.findFirst({
+          where: {
+            name: {
+              equals:
+                normalized,
+              mode:
+                'insensitive',
+            },
+          },
+          include: {
+            AIProfile: true,
+          },
+        });
+    }
 
     const profile =
       brand?.AIProfile ||
@@ -1003,9 +1393,7 @@ async function loadBrandProfile(
   } catch (error) {
     console.warn(
       '[AI] Unable to load brand AI profile:',
-      getErrorMessage(
-        error
-      )
+      getErrorMessage(error)
     );
 
     cache.set(
@@ -1017,19 +1405,25 @@ async function loadBrandProfile(
   }
 }
 
-/* ============================================================
-   PROMPT BUILDER
-   ============================================================ */
+/*
+============================================================
+PROMPT BUILDER
+============================================================
+*/
 
 function buildPrompt(
   review,
   aiProfile,
-  isRetry = false
+  options = {}
 ) {
+  const {
+    isRetry = false,
+    retryReason = '',
+  } = options;
+
   const reviewText =
     String(
-      review?.reviewText ||
-        ''
+      review?.reviewText || ''
     ).trim();
 
   const rating =
@@ -1045,6 +1439,11 @@ function buildPrompt(
 
   const language =
     detectLanguage(
+      reviewText
+    );
+
+  const detectedTopics =
+    detectReviewTopics(
       reviewText
     );
 
@@ -1086,7 +1485,6 @@ function buildPrompt(
   /*
    * NO WRITTEN REVIEW
    */
-
   if (!reviewText) {
     return `
 You are the official customer service representative for ${brandName}.
@@ -1099,23 +1497,38 @@ ${rating}/5
 Write a short, natural customer-facing reply.
 
 MANDATORY:
+
 - Naturally mention "${brandName}".
-- Include 1 natural emoji.
+- Include exactly 1 natural emoji.
 - Do not invent product details.
 - No markdown.
 - No header.
 - No quotation marks.
 - Complete sentence.
-- Reply in ${language}.
 - Do not sound like an advertisement.
+- Return ONLY the final customer reply.
 
-Return ONLY the final reply.
+Language:
+${language}
 `.trim();
   }
 
   /*
-   * WRITTEN REVIEW
+   * REQUIRED TOPICS
    */
+  const requiredTopicCount =
+    reviewText
+      .split(/\s+/)
+      .filter(Boolean)
+      .length >= 12
+      ? Math.min(
+          2,
+          detectedTopics.length
+        )
+      : Math.min(
+          1,
+          detectedTopics.length
+        );
 
   return `
 You are the official customer service representative for ${brandName}.
@@ -1132,8 +1545,16 @@ ${rating}/5
 Customer Review:
 "${reviewText}"
 
-Language:
+Customer Language:
 ${language}
+
+Detected Review Topics:
+${detectedTopics.length
+  ? detectedTopics.join(', ')
+  : 'No automatic topic detected'}
+
+Minimum meaningful topics to address:
+${requiredTopicCount || 1}
 
 ============================================================
 BRAND VOICE
@@ -1166,151 +1587,213 @@ RELEVANT KNOWLEDGE
 ${knowledge}
 
 ============================================================
-HOW TO WRITE THE REPLY
+PERSONALIZATION REQUIREMENTS
 ============================================================
 
-1. Return ONLY the final customer-facing reply.
+Read the ENTIRE customer review before writing.
 
-2. Naturally mention the exact brand name:
+You MUST respond to what the customer actually said.
+
+For a detailed review, address AT LEAST TWO meaningful
+details from the review.
+
+Meaningful details include:
+
+- quality
+- fabric
+- material
+- design
+- fit
+- size
+- alteration
+- comfort
+- service
+- delivery
+- packaging
+- price
+- value
+- praise
+- concern
+- any other specific customer comment
+
+If the review contains both praise and a concern,
+acknowledge both naturally when appropriate.
+
+Do NOT write a generic rating response.
+
+Do NOT write only:
+"Thank you for your review."
+
+Do NOT write only:
+"Thank you for the 5-star rating."
+
+Do NOT blindly copy the customer review.
+
+Naturally paraphrase the customer's actual meaning.
+
+============================================================
+BRAND REQUIREMENT
+============================================================
+
+The exact brand name:
+
 "${brandName}"
 
-3. The brand name MUST appear inside a natural sentence.
-
-4. NEVER use the brand as a header.
-
-BAD:
-${brandName}:
-Thank you for your review.
+MUST appear naturally in the reply.
 
 GOOD:
-Thank you for choosing ${brandName}! We're glad you enjoyed the quality. 😊
+"Terima kasih kerana memilih ${brandName}! Kami gembira anda suka kualiti kain dan kemasan baju. 😊"
 
-5. Read the customer's actual review carefully.
+GOOD:
+"Thank you for choosing ${brandName}! We're glad you liked the quality and design. 😊"
 
-6. Respond to something the customer actually said.
+BAD:
+"${brandName}: Thank you..."
 
-7. If they mention quality, acknowledge quality.
+BAD:
+"Brand: ${brandName}"
 
-8. If they mention material, acknowledge material.
+Do NOT use the brand as a heading.
 
-9. If they mention design, acknowledge design.
+Do NOT add the brand mechanically after writing the reply.
 
-10. If they mention comfort, acknowledge comfort.
+You must write the brand naturally yourself.
 
-11. If they mention size or fit, acknowledge it naturally.
+============================================================
+LANGUAGE REQUIREMENT
+============================================================
 
-12. If they mention delivery, acknowledge delivery.
+Reply primarily in:
 
-13. If they mention packaging, acknowledge packaging.
+${language}
 
-14. If they mention a problem, acknowledge it respectfully.
+If the customer writes Malaysian Malay:
 
-15. Never invent information.
+- Reply in natural Malaysian Malay.
+- Do not randomly mix English and Malay.
+- Do not translate word-for-word.
+- Use natural Malaysian ecommerce seller language.
+- Use complete Malay sentences.
+- Do not produce fragments such as:
+  "Terima kasih banyak atas u."
+- Do not end sentences with incomplete words.
 
-16. Never invent warranty promises.
+If the customer writes English:
 
-17. Never invent discounts.
+- Reply naturally in English.
 
-18. Never invent delivery promises.
+If the customer writes Simplified Chinese:
 
-19. Never argue with the customer.
-
-20. Never blame the customer.
+- Reply naturally in Simplified Chinese.
 
 ============================================================
 STYLE
 ============================================================
 
-- Sound like a real human Shopee seller.
-- Warm.
-- Natural.
-- Professional.
-- Concise.
-- 1–2 sentences.
-- Complete sentences.
-- Natural wording.
-- No corporate filler.
-- No excessive marketing.
-- No repetitive phrases.
-- No advertisement language.
+- Natural ecommerce seller
+- Warm
+- Genuine
+- Personal
+- Professional
+- Short
+- Human
+- 1–2 sentences
+- Approximately 15–35 words for detailed reviews
+- 1–2 natural emojis
+- No excessive marketing
+- No advertisement language
+- No corporate filler
+- No repetitive wording
 
 ============================================================
-MANDATORY OUTPUT RULES
+DO NOT INVENT
 ============================================================
 
-- Brand "${brandName}" MUST appear naturally.
-- 1–2 natural emojis.
-- No hashtags.
-- No markdown.
-- No bullet points.
-- No headings.
-- No "Reply:".
-- No "AI Generated:".
-- No quotation marks around the response.
-- No reasoning.
-- No explanation.
-- No generic rating-only reply.
-- Do not repeat the customer review word-for-word.
+Never invent:
+
+- product specifications
+- warranty
+- returns
+- refunds
+- discounts
+- delivery promises
+- compensation
+- policies
+- facts not present in the review or knowledge base
 
 ============================================================
-EXAMPLES OF THE DESIRED STYLE
+OUTPUT RULES
 ============================================================
-
-If the customer praises quality:
-
-Thank you for choosing ${brandName}! We're glad you enjoyed the quality and craftsmanship. 😊
-
-If the customer praises design:
-
-Thank you for choosing ${brandName}! We're so happy you liked the design and overall look. 😊
-
-If the customer praises comfort:
-
-Thank you for choosing ${brandName}! We're glad to hear you found it comfortable for everyday use. 😊
-
-If the customer praises delivery:
-
-Thank you for choosing ${brandName}! We're happy everything arrived smoothly and met your expectations. 😊
-
-IMPORTANT:
-Do NOT blindly copy these examples.
-Write specifically for the customer's actual review.
-
-${
-  isRetry
-    ? `
-============================================================
-RETRY
-============================================================
-
-Your previous response was rejected.
-
-Rewrite the reply.
-
-Make absolutely sure:
-
-- "${brandName}" appears naturally.
-- The customer's actual review is addressed.
-- The response is complete.
-- The response is natural.
-- The response ends with proper punctuation.
-- 1–2 natural emojis are included.
-- No header.
-- No markdown.
-- No explanation.
-
-Return ONLY the corrected customer reply.
-`
-    : ''
-}
 
 Return ONLY the final customer-facing reply.
+
+No:
+
+- markdown
+- headings
+- bullet points
+- hashtags
+- quotation marks
+- "Reply:"
+- "AI Generated:"
+- explanations
+- reasoning
+- notes
+
+The reply must:
+
+✓ address the customer's actual review
+✓ address ${requiredTopicCount || 1} meaningful detail(s)
+✓ naturally mention ${brandName}
+✓ use the correct language
+✓ use 1–2 emojis
+✓ contain complete sentences
+✓ end naturally
+✓ sound human
+
+============================================================
+${isRetry ? `
+RETRY — PREVIOUS RESPONSE FAILED VALIDATION
+============================================================
+
+The previous response was rejected.
+
+Reason:
+${retryReason || 'The response did not satisfy the personalization requirements.'}
+
+You MUST correct that exact problem.
+
+Do not repeat the previous response.
+
+Pay special attention to:
+
+- actual review details
+- meaningful topic coverage
+- natural ${language} wording
+- natural brand placement
+- complete sentences
+- no fragments
+- proper punctuation
+- 1–2 emojis
+
+Return ONLY the corrected customer-facing reply.
+
+` : ''}
+============================================================
+
+FINAL INSTRUCTION
+
+Write the final customer-facing reply now.
+
+Return ONLY the reply.
 `.trim();
 }
 
-/* ============================================================
-   GEMINI
-   ============================================================ */
+/*
+============================================================
+GEMINI
+============================================================
+*/
 
 async function askGemini(
   prompt
@@ -1333,9 +1816,10 @@ async function askGemini(
   }
 
   /*
-   * CORRECT GEMINI URL
+   * IMPORTANT:
+   * This MUST be a normal URL.
+   * Do NOT put markdown around it.
    */
-
   const url =
     'https://generativelanguage.googleapis.com/v1beta/models/' +
     model +
@@ -1355,60 +1839,105 @@ async function askGemini(
             'application/json',
         },
 
-        body:
-          JSON.stringify({
-            systemInstruction: {
-              parts: [
-                {
-                  text: `
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text: `
 You are CCIOS Review Intelligence.
 
-Write natural ecommerce customer review replies.
+You write natural, personalized ecommerce customer review replies.
 
-For written reviews:
+MANDATORY RULES:
 
-- Address the customer's actual words.
-- Naturally mention the exact brand name provided.
-- Never use the brand as a header.
-- Never return a generic rating-only response.
-- Return only the customer-facing reply.
-- No headings.
-- No markdown.
-- Use 1–2 natural emojis.
-- Keep replies short.
-- Use complete sentences.
-- No explanations.
-                  `.trim(),
+1. Read the customer's entire review.
+
+2. Respond to the customer's actual words.
+
+3. Never produce a generic rating-only reply.
+
+4. For a detailed review, address at least TWO meaningful
+   details from the review.
+
+5. Meaningful details include:
+   quality, fabric, material, design, fit, size, alteration,
+   comfort, service, delivery, packaging, price, value,
+   praise, criticism or another specific customer comment.
+
+6. The exact brand name supplied in the prompt must appear
+   naturally inside a sentence.
+
+7. Never use the brand as a heading.
+
+8. Never invent facts.
+
+9. Never invent warranty promises.
+
+10. Never invent discounts.
+
+11. Never invent delivery promises.
+
+12. Never invent product specifications.
+
+13. Reply primarily in the customer's detected language.
+
+14. If the customer writes Malaysian Malay:
+    - use natural Malaysian Malay
+    - do not randomly mix English and Malay
+    - do not translate word-for-word
+    - use complete natural sentences
+    - avoid incomplete fragments
+
+15. Use 1–2 natural emojis.
+
+16. Keep the reply short and human.
+
+17. Use 1–2 complete sentences.
+
+18. No markdown.
+
+19. No headings.
+
+20. No hashtags.
+
+21. No quotation marks around the reply.
+
+22. No explanation.
+
+23. Return ONLY the final customer-facing reply.
+
+Before answering, silently verify:
+
+✓ actual review addressed
+✓ meaningful details addressed
+✓ correct language
+✓ brand naturally included
+✓ complete sentences
+✓ natural punctuation
+✓ 1–2 emojis
+✓ no invented information
+✓ no generic rating response
+`,
+              },
+            ],
+          },
+
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: prompt,
                 },
               ],
             },
+          ],
 
-            contents: [
-              {
-                role: 'user',
-
-                parts: [
-                  {
-                    text:
-                      prompt,
-                  },
-                ],
-              },
-            ],
-
-            generationConfig: {
-              temperature:
-                0.45,
-
-              maxOutputTokens:
-                200,
-            },
-          }),
-
-        signal:
-          AbortSignal.timeout(
-            30000
-          ),
+          generationConfig: {
+            temperature: 0.35,
+            maxOutputTokens: 180,
+          },
+        }),
       }
     );
 
@@ -1425,8 +1954,7 @@ For written reviews:
     await response.json();
 
   const text =
-    data
-      ?.candidates?.[0]
+    data?.candidates?.[0]
       ?.content?.parts
       ?.map(
         (part) =>
@@ -1444,9 +1972,11 @@ For written reviews:
   return text;
 }
 
-/* ============================================================
-   GROQ
-   ============================================================ */
+/*
+============================================================
+GROQ
+============================================================
+*/
 
 async function askGroqSafe(
   prompt
@@ -1468,8 +1998,7 @@ async function askGroqSafe(
     await askGroq(
       prompt,
       {
-        skipGemini:
-          true,
+        skipGemini: true,
       }
     );
 
@@ -1487,9 +2016,11 @@ async function askGroqSafe(
   ).trim();
 }
 
-/* ============================================================
-   GENERATION ENGINE
-   ============================================================ */
+/*
+============================================================
+GENERATION ENGINE
+============================================================
+*/
 
 async function generateReviewReply(
   review,
@@ -1505,7 +2036,6 @@ async function generateReviewReply(
   /*
    * BLANK REVIEW
    */
-
   if (!reviewText) {
     return getNoCommentTemplate(
       normalizeBrand(
@@ -1525,7 +2055,9 @@ async function generateReviewReply(
     );
 
   /*
-   * GEMINI FIRST
+   ============================================================
+   GEMINI FIRST
+   ============================================================
    */
 
   if (
@@ -1541,7 +2073,9 @@ async function generateReviewReply(
         buildPrompt(
           review,
           aiProfile,
-          false
+          {
+            isRetry: false,
+          }
         );
 
       const rawReply =
@@ -1576,7 +2110,9 @@ async function generateReviewReply(
       );
 
       /*
-       * GEMINI RETRY
+       ========================================================
+       GEMINI RETRY
+       ========================================================
        */
 
       console.log(
@@ -1587,7 +2123,11 @@ async function generateReviewReply(
         buildPrompt(
           review,
           aiProfile,
-          true
+          {
+            isRetry: true,
+            retryReason:
+              validation.reason,
+          }
         );
 
       const retryReply =
@@ -1647,7 +2187,9 @@ async function generateReviewReply(
   }
 
   /*
-   * GROQ FALLBACK
+   ============================================================
+   GROQ FALLBACK
+   ============================================================
    */
 
   try {
@@ -1659,7 +2201,11 @@ async function generateReviewReply(
       buildPrompt(
         review,
         aiProfile,
-        true
+        {
+          isRetry: true,
+          retryReason:
+            'Gemini could not produce a validated response. Generate a fresh response that strictly follows all personalization, language, brand and topic requirements.',
+        }
       );
 
     const rawReply =
@@ -1704,9 +2250,11 @@ async function generateReviewReply(
   }
 }
 
-/* ============================================================
-   PROCESS ONE REVIEW
-   ============================================================ */
+/*
+============================================================
+PROCESS ONE REVIEW
+============================================================
+*/
 
 async function processReview(
   review,
@@ -1717,6 +2265,9 @@ async function processReview(
     `[Bulk AI] Processing review ${review?.id}`
   );
 
+  /*
+   * Never regenerate replied reviews.
+   */
   if (
     review?.status ===
     'REPLIED'
@@ -1737,6 +2288,11 @@ async function processReview(
         profileCache
       );
 
+    /*
+     * FINAL VALIDATION
+     *
+     * This is the final gate before DB.
+     */
     const finalValidation =
       validateReply(
         reply,
@@ -1796,9 +2352,11 @@ async function processReview(
   }
 }
 
-/* ============================================================
-   CONCURRENT PROCESSOR
-   ============================================================ */
+/*
+============================================================
+CONCURRENT PROCESSOR
+============================================================
+*/
 
 async function processInBatches(
   candidates,
@@ -1846,9 +2404,11 @@ async function processInBatches(
   return results;
 }
 
-/* ============================================================
-   POST HANDLER
-   ============================================================ */
+/*
+============================================================
+POST HANDLER
+============================================================
+*/
 
 export async function POST(
   req
@@ -1909,7 +2469,9 @@ export async function POST(
     let candidates = [];
 
     /*
-     * EXPLICIT IDS
+     ============================================================
+     EXPLICIT IDS
+     ============================================================
      */
 
     if (
@@ -1964,7 +2526,9 @@ export async function POST(
     } else {
 
       /*
-       * NORMAL BULK
+       ========================================================
+       NORMAL BULK
+       ========================================================
        */
 
       candidates =
@@ -2013,8 +2577,20 @@ export async function POST(
       });
     }
 
+    /*
+     ============================================================
+     PROFILE CACHE
+     ============================================================
+     */
+
     const profileCache =
       new Map();
+
+    /*
+     ============================================================
+     PROCESS
+     ============================================================
+     */
 
     const results =
       await processInBatches(
@@ -2022,6 +2598,12 @@ export async function POST(
         aiState,
         profileCache
       );
+
+    /*
+     ============================================================
+     RESULTS
+     ============================================================
+     */
 
     const generatedCount =
       results.filter(
@@ -2040,6 +2622,7 @@ export async function POST(
         (result) => ({
           id:
             result.id,
+
           error:
             result.error,
         })
@@ -2098,6 +2681,9 @@ export async function POST(
 
       geminiQuotaExhausted:
         aiState.geminiQuotaExhausted,
+
+      geminiCooldownActive:
+        isGeminiQuotaBlocked(),
     });
 
   } catch (error) {
