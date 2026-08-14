@@ -347,7 +347,10 @@ function filterRelevantKnowledge(
    NO COMMENT TEMPLATE
    ============================================================ */
 
-function getNoCommentTemplate(brandName, rating) {
+function getNoCommentTemplate(
+  brandName,
+  rating
+) {
   if (rating >= 5) {
     return `Thank you for choosing ${brandName} and for your 5-star rating! We truly appreciate your support. 😊`;
   }
@@ -1422,12 +1425,16 @@ async function generateReviewReply(
    */
 
   if (!reviewText) {
-    return getNoCommentTemplate(
-      Number(
-        review?.rating
-      ) || 5
-    );
-  }
+  const brandName = normalizeBrand(
+    review?.brand ||
+      review?.storeName
+  );
+
+  return getNoCommentTemplate(
+    brandName,
+    Number(review?.rating) || 5
+  );
+}
 
   const aiProfile =
     await loadBrandProfile(
