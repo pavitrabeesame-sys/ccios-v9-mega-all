@@ -10,12 +10,13 @@ export const maxDuration = 60;
 CCIOS — MASTER REVIEW AI GENERATION ENGINE
 ============================================================
 
-SHORT + NATURAL + EMOJI VERSION
+SHORT + NATURAL + BRAND-AWARE VERSION
 
-- 8–28 words
+- 10–40 words
 - 1–2 natural emojis
 - 1–2 short sentences
 - Written reviews address actual customer content
+- Brand must appear naturally
 - No markdown
 - No headers
 - No hashtags
@@ -25,6 +26,13 @@ SHORT + NATURAL + EMOJI VERSION
 - Brand AI profiles
 - Controlled parallel processing
 - REPLIED reviews never regenerated
+
+IMPORTANT:
+
+AI is asked to mention the brand.
+
+If AI forgets the brand, CCIOS automatically adds it
+before final validation.
 
 ============================================================
 */
@@ -655,6 +663,73 @@ function countEmojis(text) {
 }
 
 /* ============================================================
+   BRAND AUTO-INJECTION
+   ============================================================ */
+
+/*
+ * AI is instructed to mention the brand.
+ *
+ * But AI can occasionally forget.
+ *
+ * Therefore CCIOS guarantees the brand appears
+ * in the final customer-facing reply.
+ */
+
+function ensureBrandMention(
+  reply,
+  brandName
+) {
+  let cleaned =
+    String(reply || '').trim();
+
+  if (!cleaned) {
+    return cleaned;
+  }
+
+  if (!brandName) {
+    return cleaned;
+  }
+
+  const alreadyMentioned =
+    cleaned
+      .toLowerCase()
+      .includes(
+        brandName.toLowerCase()
+      );
+
+  if (alreadyMentioned) {
+    return cleaned;
+  }
+
+  /*
+   * If the reply already begins with "Thank you",
+   * replace that opening instead of creating:
+   *
+   * "Thank you for choosing X! Thank you..."
+   */
+
+  if (
+    /^thank you\b/i.test(
+      cleaned
+    )
+  ) {
+    cleaned =
+      cleaned.replace(
+        /^thank you\b/i,
+        `Thank you for choosing ${brandName}`
+      );
+
+    return cleaned;
+  }
+
+  /*
+   * Otherwise add the brand naturally at the beginning.
+   */
+
+  return `Thank you for choosing ${brandName}! ${cleaned}`;
+}
+
+/* ============================================================
    VALIDATION
    ============================================================ */
 
@@ -669,7 +744,8 @@ function validateReply(reply, review) {
     };
   }
 
-  let cleaned = cleanReply(reply);
+  let cleaned =
+    cleanReply(reply);
 
   if (!cleaned) {
     return {
@@ -689,16 +765,15 @@ function validateReply(reply, review) {
     };
   }
 
-  const brandName = normalizeBrand(
-    review?.brand ||
-      review?.storeName
-  );
+  const brandName =
+    normalizeBrand(
+      review?.brand ||
+        review?.storeName
+    );
 
-  /*
-   * ============================================================
-   * BRAND MUST APPEAR
-   * ============================================================
-   */
+  /* ==========================================================
+     BRAND HEADER CHECK
+     ========================================================== */
 
   const escapedBrand =
     brandName.replace(
@@ -723,31 +798,28 @@ function validateReply(reply, review) {
     };
   }
 
-  if (
-    !cleaned
-      .toLowerCase()
-      .includes(
-        brandName.toLowerCase()
-      )
-  ) {
-    return {
-      valid: false,
-      reason:
-        `Reply must mention the brand "${brandName}".`,
-    };
-  }
+  /* ==========================================================
+     BRAND AUTO-FIX
+     ========================================================== */
+
+  cleaned =
+    ensureBrandMention(
+      cleaned,
+      brandName
+    );
+
+  /* ==========================================================
+     EMOJI
+     ========================================================== */
 
   /*
-   * ============================================================
-   * EMOJI
-   * ============================================================
-   *
-   * DO NOT FAIL THE REVIEW JUST BECAUSE AI FORGOT EMOJI.
+   * DO NOT FAIL JUST BECAUSE AI FORGOT EMOJI.
    * Add one automatically.
    */
 
   if (!containsEmoji(cleaned)) {
-    cleaned = `${cleaned} 😊`;
+    cleaned =
+      `${cleaned} 😊`;
   }
 
   if (countEmojis(cleaned) > 2) {
@@ -758,17 +830,17 @@ function validateReply(reply, review) {
     };
   }
 
-  /*
-   * ============================================================
-   * PUNCTUATION
-   * ============================================================
-   */
+  /* ==========================================================
+     PUNCTUATION
+     ========================================================== */
 
   const emojiRegex =
     /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+$/u;
 
   const emojiMatch =
-    cleaned.match(emojiRegex);
+    cleaned.match(
+      emojiRegex
+    );
 
   if (emojiMatch) {
     const emoji =
@@ -796,11 +868,9 @@ function validateReply(reply, review) {
     cleaned += '.';
   }
 
-  /*
-   * ============================================================
-   * LANGUAGE / LENGTH
-   * ============================================================
-   */
+  /* ==========================================================
+     LANGUAGE / LENGTH
+     ========================================================== */
 
   const language =
     detectLanguage(
@@ -837,11 +907,9 @@ function validateReply(reply, review) {
     };
   }
 
-  /*
-   * ============================================================
-   * INCOMPLETE ENDING CHECK
-   * ============================================================
-   */
+  /* ==========================================================
+     INCOMPLETE ENDING CHECK
+     ========================================================== */
 
   const words =
     cleaned
@@ -893,11 +961,9 @@ function validateReply(reply, review) {
     };
   }
 
-  /*
-   * ============================================================
-   * REVIEW SPECIFICITY
-   * ============================================================
-   */
+  /* ==========================================================
+     REVIEW SPECIFICITY
+     ========================================================== */
 
   const specificity =
     validateReviewSpecificity(
@@ -912,6 +978,24 @@ function validateReply(reply, review) {
       valid: false,
       reason:
         specificity.reason,
+    };
+  }
+
+  /* ==========================================================
+     FINAL BRAND SAFETY CHECK
+     ========================================================== */
+
+  if (
+    !cleaned
+      .toLowerCase()
+      .includes(
+        brandName.toLowerCase()
+      )
+  ) {
+    return {
+      valid: false,
+      reason:
+        `Final reply must mention the brand "${brandName}".`,
     };
   }
 
@@ -1057,6 +1141,10 @@ function buildPrompt(
       reviewText
     );
 
+  /* ==========================================================
+     BLANK REVIEW
+     ========================================================== */
+
   if (!reviewText) {
     return `
 You are the official customer service representative for ${brandName}.
@@ -1068,6 +1156,7 @@ Customer rating: ${rating}/5
 Return ONLY a short natural customer-facing reply.
 
 RULES:
+- MUST mention the brand name "${brandName}" naturally.
 - MUST include 1-2 natural emojis.
 - Do not invent product details.
 - Do not mention details the customer did not provide.
@@ -1078,7 +1167,7 @@ RULES:
 - Keep it short.
 - Do not be overly promotional.
 - Reply in ${language}.
-- Use approximately 8-20 words.
+- Use approximately 10-20 words.
 
 Brand voice:
 ${getDefaultBrandVoice(brandName)}
@@ -1099,6 +1188,10 @@ Forbidden words:
 ${forbiddenWords}
 `.trim();
   }
+
+  /* ==========================================================
+     WRITTEN REVIEW
+     ========================================================== */
 
   return `
 You are the official customer service representative for ${brandName}.
@@ -1158,53 +1251,95 @@ MANDATORY RULES
 
 3. NEVER return a generic rating-only response.
 
-4. Mention or naturally address at least one meaningful
+4. MUST mention the brand name "${brandName}" naturally.
+
+5. The brand name should be part of the sentence.
+   Do NOT place the brand on a separate line.
+
+6. Do NOT begin with:
+   "${brandName}:"
+   "${brandName} -"
+   "${brandName} —"
+
+7. Mention or naturally address at least one meaningful
    detail from the review.
 
-5. If the customer mentions quality, material, design,
+8. If the customer mentions quality, material, design,
    comfort, fit, size, delivery, packaging, usability,
    durability or another detail, respond specifically.
 
-6. Do not repeat the review word-for-word.
+9. Do not repeat the review word-for-word.
 
-7. If there are multiple meaningful points,
-   acknowledge the important ones naturally.
+10. If there are multiple meaningful points,
+    acknowledge the important ones naturally.
 
-8. If there is criticism or concern,
-   acknowledge it respectfully.
+11. If there is criticism or concern,
+    acknowledge it respectfully.
 
-9. Do not invent facts, specifications,
-   warranty promises, delivery promises,
-   discounts or policies.
+12. Do not invent facts, specifications,
+    warranty promises, delivery promises,
+    discounts or policies.
 
-10. No store-name header.
+13. No store-name header.
 
-11. No brand title prefix.
+14. No brand title prefix.
 
-12. No quotation marks.
+15. No quotation marks.
 
-13. MUST include 1-2 natural emojis.
+16. MUST include 1-2 natural emojis.
 
-14. No hashtags.
+17. No hashtags.
 
-15. No markdown.
+18. No markdown.
 
-16. No bullet points.
+19. No bullet points.
 
-17. Keep the reply SHORT: 8-28 words.
+20. Keep the reply SHORT: 10-28 words.
 
-18. Use only 1-2 short natural sentences.
+21. Use only 1-2 short natural sentences.
 
-19. Every sentence must be complete.
+22. Every sentence must be complete.
 
-20. Sound like a genuine seller,
+23. Sound like a genuine seller,
     not an advertisement.
 
-21. Do not mention these instructions.
+24. Do not mention these instructions.
 
-22. Do not explain reasoning.
+25. Do not explain reasoning.
 
-23. Return ONLY the final reply.
+26. Return ONLY the final reply.
+
+============================================================
+EXAMPLES OF THE DESIRED STYLE
+============================================================
+
+Example 1:
+
+Customer:
+"Good quality and comfortable."
+
+Reply:
+"Thank you for choosing ${brandName}! We're glad you enjoyed the quality and comfort. 😊"
+
+Example 2:
+
+Customer:
+"Material is soft and fits well."
+
+Reply:
+"Thank you for choosing ${brandName}! We're happy the soft material and comfortable fit worked well for you. 😊"
+
+Example 3:
+
+Customer:
+"Bagus, cantik dan selesa."
+
+Reply:
+"Terima kasih kerana memilih ${brandName}! Kami gembira anda suka reka bentuk yang cantik dan selesa. 😊"
+
+IMPORTANT:
+Do not copy these examples word-for-word.
+Write specifically for the actual customer review.
 
 ============================================================
 QUALITY CHECK
@@ -1213,9 +1348,11 @@ QUALITY CHECK
 Before answering, silently verify:
 
 - Actual review addressed.
+- Brand name "${brandName}" included.
+- Brand sounds natural, not a header.
 - At least one meaningful review detail addressed.
 - Not a generic rating reply.
-- 8-28 words.
+- 10-28 words.
 - 1-2 short sentences.
 - 1-2 natural emojis.
 - No markdown.
@@ -1238,9 +1375,12 @@ Directly address:
 
 "${reviewText}"
 
+IMPORTANT:
+The final reply MUST naturally mention "${brandName}".
+
 Keep it SHORT.
 
-Use 8-28 words.
+Use 10-28 words.
 
 Include 1-2 natural emojis.
 
@@ -1302,12 +1442,14 @@ Write short, natural ecommerce customer review replies.
 For written reviews:
 - Address the customer's actual words.
 - Never return a generic rating-only response.
+- MUST naturally mention the provided brand name.
+- Never use the brand as a heading.
 - Return only the customer-facing reply.
 - No headings.
 - No markdown.
 - MUST include 1-2 natural emojis.
 - Keep replies short.
-- 8-28 words.
+- 10-28 words.
 - 1-2 short sentences.
 - No explanations.
 - Complete sentences.
@@ -1395,14 +1537,14 @@ async function askGroqSafe(prompt) {
 
   if (
     !reply ||
-    !reply.trim()
+    !String(reply).trim()
   ) {
     throw new Error(
       'Groq returned an empty response.'
     );
   }
 
-  return reply.trim();
+  return String(reply).trim();
 }
 
 /* ============================================================
@@ -1420,21 +1562,22 @@ async function generateReviewReply(
         ''
     ).trim();
 
-  /*
-   * BLANK REVIEW = INSTANT
-   */
+  /* ==========================================================
+     BLANK REVIEW = INSTANT
+     ========================================================== */
 
   if (!reviewText) {
-  const brandName = normalizeBrand(
-    review?.brand ||
-      review?.storeName
-  );
+    const brandName =
+      normalizeBrand(
+        review?.brand ||
+          review?.storeName
+      );
 
-  return getNoCommentTemplate(
-    brandName,
-    Number(review?.rating) || 5
-  );
-}
+    return getNoCommentTemplate(
+      brandName,
+      Number(review?.rating) || 5
+    );
+  }
 
   const aiProfile =
     await loadBrandProfile(
@@ -1442,9 +1585,9 @@ async function generateReviewReply(
       profileCache
     );
 
-  /*
-   * GEMINI FIRST
-   */
+  /* ==========================================================
+     GEMINI FIRST
+     ========================================================== */
 
   if (
     !aiState.geminiQuotaExhausted &&
@@ -1481,7 +1624,8 @@ async function generateReviewReply(
         validation.valid
       ) {
         console.log(
-          '[AI] GEMINI VALIDATED'
+          '[AI] GEMINI VALIDATED:',
+          validation.cleanedReply
         );
 
         return validation.cleanedReply;
@@ -1491,6 +1635,14 @@ async function generateReviewReply(
         '[AI] Gemini validation failed:',
         validation.reason
       );
+
+      /*
+       * If Gemini failed only because of a formatting
+       * or brand issue, validation already auto-fixes
+       * brand and emoji.
+       *
+       * Other validation failures go to Groq.
+       */
     } catch (error) {
       console.warn(
         '[AI] Gemini failed:',
@@ -1512,9 +1664,9 @@ async function generateReviewReply(
     );
   }
 
-  /*
-   * GROQ FALLBACK
-   */
+  /* ==========================================================
+     GROQ FALLBACK
+     ========================================================== */
 
   const prompt =
     buildPrompt(
