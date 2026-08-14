@@ -1780,11 +1780,12 @@ async function askGemini(
   prompt
 ) {
   const apiKey =
-    process.env.GEMINI_API_KEY;
+    String(process.env.GEMINI_API_KEY || '').trim();
 
   const model =
-    process.env.GEMINI_MODEL ||
-    'gemini-2.5-flash-lite';
+    String(process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite')
+      .trim()
+      .replace(/['"]/g, '');
 
   if (
     !apiKey ||
@@ -1796,18 +1797,11 @@ async function askGemini(
     );
   }
 
-  /*
-   * IMPORTANT:
-   * This MUST be a normal URL.
-   * Do NOT put markdown around it.
-   */
   const url =
-    '[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/)' +
+    'https://generativelanguage.googleapis.com/v1beta/models/' +
     model +
     ':generateContent?key=' +
-    encodeURIComponent(
-      apiKey
-    );
+    encodeURIComponent(apiKey);
 
   const response =
     await fetch(
