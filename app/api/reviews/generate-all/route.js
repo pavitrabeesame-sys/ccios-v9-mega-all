@@ -33,8 +33,8 @@ SHORT + NATURAL + EMOJI VERSION
    CONFIG
    ============================================================ */
 
-const MIN_WORDS = 8;
-const MAX_WORDS = 28;
+const MIN_WORDS = 10;
+const MAX_WORDS = 40;
 
 const GEMINI_QUOTA_COOLDOWN_MS =
   24 * 60 * 60 * 1000;
@@ -347,20 +347,20 @@ function filterRelevantKnowledge(
    NO COMMENT TEMPLATE
    ============================================================ */
 
-function getNoCommentTemplate(rating) {
+function getNoCommentTemplate(brandName, rating) {
   if (rating >= 5) {
-    return 'Thank you so much for your 5-star rating! 😊 We truly appreciate your support! ❤️';
+    return `Thank you for choosing ${brandName} and for your 5-star rating! We truly appreciate your support. 😊`;
   }
 
   if (rating === 4) {
-    return 'Thank you so much for your 4-star rating! 😊 We really appreciate your support! ❤️';
+    return `Thank you for choosing ${brandName} and for your 4-star rating! We really appreciate your support. 😊`;
   }
 
   if (rating === 3) {
-    return 'Thank you for your rating and feedback! 😊 We appreciate your support and hope to serve you even better next time. ❤️';
+    return `Thank you for choosing ${brandName} and for your feedback. We appreciate your support and hope to serve you even better next time. 😊`;
   }
 
-  return 'Thank you for your feedback. 🙏 We are sorry your experience did not fully meet expectations and we are here to help. ❤️';
+  return `Thank you for choosing ${brandName}. We are sorry your experience did not fully meet expectations and we are here to help. 🙏`;
 }
 
 /* ============================================================
@@ -655,29 +655,23 @@ function countEmojis(text) {
    VALIDATION
    ============================================================ */
 
-function validateReply(
-  reply,
-  review
-) {
+function validateReply(reply, review) {
   if (
     !reply ||
     typeof reply !== 'string'
   ) {
     return {
       valid: false,
-      reason:
-        'Empty AI response.',
+      reason: 'Empty AI response.',
     };
   }
 
-  const cleaned =
-    cleanReply(reply);
+  let cleaned = cleanReply(reply);
 
   if (!cleaned) {
     return {
       valid: false,
-      reason:
-        'Empty response after cleaning.',
+      reason: 'Empty response after cleaning.',
     };
   }
 
@@ -688,44 +682,20 @@ function validateReply(
   ) {
     return {
       valid: false,
-      reason:
-        'Markdown detected.',
+      reason: 'Markdown detected.',
     };
   }
+
+  const brandName = normalizeBrand(
+    review?.brand ||
+      review?.storeName
+  );
 
   /*
-   * EMOJI REQUIRED
+   * ============================================================
+   * BRAND MUST APPEAR
+   * ============================================================
    */
-
-  if (
-    !containsEmoji(cleaned)
-  ) {
-    return {
-      valid: false,
-      reason:
-        'Reply must contain at least one emoji.',
-    };
-  }
-
-  /*
-   * MAXIMUM 2 EMOJIS
-   */
-
-  if (
-    countEmojis(cleaned) > 2
-  ) {
-    return {
-      valid: false,
-      reason:
-        'Reply contains more than 2 emojis.',
-    };
-  }
-
-  const brandName =
-    normalizeBrand(
-      review?.brand ||
-        review?.storeName
-    );
 
   const escapedBrand =
     brandName.replace(
@@ -746,28 +716,88 @@ function validateReply(
   ) {
     return {
       valid: false,
+      reason: 'Brand header detected.',
+    };
+  }
+
+  if (
+    !cleaned
+      .toLowerCase()
+      .includes(
+        brandName.toLowerCase()
+      )
+  ) {
+    return {
+      valid: false,
       reason:
-        'Brand header detected.',
+        `Reply must mention the brand "${brandName}".`,
     };
   }
 
   /*
-   * AUTOMATIC PUNCTUATION
+   * ============================================================
+   * EMOJI
+   * ============================================================
    *
-   * IMPORTANT:
-   * Do NOT reject replies just because Gemini/Groq
-   * forgot the final punctuation.
+   * DO NOT FAIL THE REVIEW JUST BECAUSE AI FORGOT EMOJI.
+   * Add one automatically.
    */
 
-  let finalReply = cleaned;
-
-  if (
-    !/[.!?。！？]$/.test(
-      finalReply
-    )
-  ) {
-    finalReply += '.';
+  if (!containsEmoji(cleaned)) {
+    cleaned = `${cleaned} 😊`;
   }
+
+  if (countEmojis(cleaned) > 2) {
+    return {
+      valid: false,
+      reason:
+        'Reply contains more than 2 emojis.',
+    };
+  }
+
+  /*
+   * ============================================================
+   * PUNCTUATION
+   * ============================================================
+   */
+
+  const emojiRegex =
+    /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+$/u;
+
+  const emojiMatch =
+    cleaned.match(emojiRegex);
+
+  if (emojiMatch) {
+    const emoji =
+      emojiMatch[0];
+
+    const textWithoutEmoji =
+      cleaned
+        .slice(
+          0,
+          -emoji.length
+        )
+        .trimEnd();
+
+    if (
+      !/[.!?。！？]$/.test(
+        textWithoutEmoji
+      )
+    ) {
+      cleaned =
+        `${textWithoutEmoji}.${emoji}`;
+    }
+  } else if (
+    !/[.!?。！？]$/.test(cleaned)
+  ) {
+    cleaned += '.';
+  }
+
+  /*
+   * ============================================================
+   * LANGUAGE / LENGTH
+   * ============================================================
+   */
 
   const language =
     detectLanguage(
@@ -775,7 +805,7 @@ function validateReply(
     );
 
   const wordCount =
-    finalReply
+    cleaned
       .split(/\s+/)
       .filter(Boolean)
       .length;
@@ -804,8 +834,14 @@ function validateReply(
     };
   }
 
+  /*
+   * ============================================================
+   * INCOMPLETE ENDING CHECK
+   * ============================================================
+   */
+
   const words =
-    finalReply
+    cleaned
       .toLowerCase()
       .replace(
         /[^\p{L}\p{N}\s]/gu,
@@ -843,7 +879,9 @@ function validateReply(
     ]);
 
   if (
-    forbiddenEndings.has(lastWord)
+    forbiddenEndings.has(
+      lastWord
+    )
   ) {
     return {
       valid: false,
@@ -852,9 +890,15 @@ function validateReply(
     };
   }
 
+  /*
+   * ============================================================
+   * REVIEW SPECIFICITY
+   * ============================================================
+   */
+
   const specificity =
     validateReviewSpecificity(
-      finalReply,
+      cleaned,
       review?.reviewText
     );
 
@@ -870,8 +914,7 @@ function validateReply(
 
   return {
     valid: true,
-    cleanedReply:
-      finalReply,
+    cleanedReply: cleaned,
     reason:
       specificity.reason,
   };
@@ -1340,7 +1383,12 @@ async function askGroqSafe(prompt) {
   }
 
   const reply =
-    await askGroq(prompt);
+    await askGroq(
+      prompt,
+      {
+        skipGemini: true,
+      }
+    );
 
   if (
     !reply ||

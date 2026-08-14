@@ -587,8 +587,13 @@ async function askOllama(
 */
 
 export async function askGroq(
-  prompt
+  prompt,
+  options = {}
 ) {
+  const skipGemini =
+    Boolean(
+      options?.skipGemini
+    );
   if (
     !prompt ||
     !String(prompt).trim()
@@ -608,6 +613,7 @@ export async function askGroq(
    |--------------------------------------------------------------------------
    */
 
+  if (!skipGemini) {
   try {
     console.log(
       `[AI] Trying Gemini ${GEMINI_MODEL}`
@@ -620,18 +626,23 @@ export async function askGroq(
 
     if (reply) {
       console.log(
-        `[AI] Gemini succeeded`
+        '[AI] Gemini succeeded'
       );
 
       return reply;
     }
   } catch (error) {
     console.warn(
-      `[AI] Gemini failed:`,
+      '[AI] Gemini failed:',
       error?.message ||
         String(error)
     );
   }
+} else {
+  console.log(
+    '[AI] Gemini skipped — direct Groq fallback requested'
+  );
+}
 
 
   /*

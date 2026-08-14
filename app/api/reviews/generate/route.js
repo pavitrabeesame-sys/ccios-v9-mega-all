@@ -203,27 +203,38 @@ function detectLanguage(text) {
 }
 
 /*
-============================================================
-PROMPT
-============================================================
-*/
+/* ============================================================
+   PROMPT
+   ============================================================ */
 
 function buildPrompt(review, attempt = 1) {
-  const reviewText = String(review.reviewText || "").trim();
-  const rating = Number(review.rating) || 5;
+  const reviewText = String(
+    review.reviewText || ""
+  ).trim();
+
+  const rating =
+    Number(review.rating) || 5;
 
   const brand = getBrand(
-    review.brand || review.storeName
+    review.brand ||
+      review.storeName
   );
 
-  const language = detectLanguage(reviewText);
+  const language =
+    detectLanguage(reviewText);
 
   let languageRule = "";
 
-  if (language === "Simplified Chinese") {
+  if (
+    language ===
+    "Simplified Chinese"
+  ) {
     languageRule =
       "Reply naturally in Simplified Chinese.";
-  } else if (language === "Malaysian Malay") {
+  } else if (
+    language ===
+    "Malaysian Malay"
+  ) {
     languageRule =
       "Reply naturally in Malaysian Malay. Do not translate English word-for-word.";
   } else {
@@ -265,22 +276,41 @@ VERY IMPORTANT:
 - Never argue with the customer.
 - Never blame the customer.
 
+BRAND MENTION — REQUIRED:
+
+- You MUST naturally mention the brand name "${brand.name}" in the reply.
+- Mention the brand naturally inside a normal customer-facing sentence.
+- Do NOT put the brand as a heading.
+- Do NOT write "${brand.name}:" at the beginning.
+- Mention the brand once unless repeating it is genuinely natural.
+- The reply must still sound like a real seller, not an advertisement.
+
 STYLE:
 
 - Sound like a real human Shopee seller.
 - Warm.
 - Natural.
 - Professional.
-- Concise but complete.
-- Normally 2-4 sentences.
-- Usually around 25-60 words.
-- Short reviews may receive shorter replies.
-- Detailed reviews may receive slightly longer replies.
-- Do NOT force every reply to the same length.
+- Personal.
+- Short and concise.
+- Normally 1-2 short sentences.
+- Target approximately 10-40 words.
+- Do NOT force every reply to exactly the same length.
+- A simple review can receive a simple reply.
+- A detailed review can receive a slightly fuller reply.
+- Thank the customer naturally.
+- For positive reviews, acknowledge what they liked.
+- Do not write long corporate-style paragraphs.
+
+EMOJI:
+
+- MUST include 1 natural emoji.
+- You may use 2 natural emojis when appropriate.
+- Use emojis naturally, not excessively.
+- Do not put emojis on every word or sentence.
 
 DO NOT USE:
 
-- emojis
 - hashtags
 - markdown
 - bullet points
@@ -294,24 +324,46 @@ DO NOT USE:
 - overly formal corporate language
 
 AVOID OVERUSING:
+
 "We are delighted to hear"
 "We truly appreciate"
 "wonderful review"
 "positive experience"
 "commitment to excellence"
 
+IMPORTANT:
+
 The response should feel individually written for this customer.
 
+Example style only:
+
+"Thank you for choosing ${brand.name} and for your 5-star rating! We’re happy to know you enjoyed the quality. 😊"
+
+Do NOT copy the example word-for-word.
+Use it only as a style reference.
+
 OUTPUT:
+
 Return ONLY the final customer-facing reply.
 
 Attempt ${attempt}.
+
 ${
   attempt > 1
     ? `
 The previous response was rejected.
-Make sure this response is complete, natural and ends with proper punctuation.
-Do not stop mid-sentence.
+
+Rewrite the reply.
+
+Make sure:
+- The brand name "${brand.name}" is included naturally.
+- The reply addresses the actual customer review.
+- The reply contains 1-2 natural emojis.
+- The reply is short and natural.
+- The reply is complete.
+- The reply ends with proper punctuation.
+
+Return ONLY the corrected customer reply.
 `
     : ""
 }
