@@ -413,7 +413,7 @@ async function askGemini(prompt) {
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
   if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY') throw new Error('Gemini API key is not configured.');
 
-  const url = `[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(apiKey);
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
