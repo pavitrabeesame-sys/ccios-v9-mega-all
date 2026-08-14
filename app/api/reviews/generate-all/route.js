@@ -1910,7 +1910,10 @@ Before answering, silently verify:
 
           generationConfig: {
             temperature: 0.35,
-            maxOutputTokens: 180,
+            maxOutputTokens: 500,
+            thinkingConfig: {
+              thinkingBudget: 0,
+            },
           },
         }),
       }

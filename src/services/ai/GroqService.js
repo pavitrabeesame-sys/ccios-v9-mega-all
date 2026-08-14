@@ -33,7 +33,7 @@ const OLLAMA_MODEL =
 
 const REQUEST_TIMEOUT_MS = 30000;
 
-const GEMINI_MAX_TOKENS = 180;
+const GEMINI_MAX_TOKENS = 500;
 
 const GROQ_MAX_TOKENS = 180;
 
@@ -252,6 +252,10 @@ async function askGemini(
 
                 maxOutputTokens:
                   GEMINI_MAX_TOKENS,
+
+                thinkingConfig: {
+                  thinkingBudget: 0,
+                },
               },
             }),
 
