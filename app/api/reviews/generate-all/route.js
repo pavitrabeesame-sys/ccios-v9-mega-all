@@ -1040,27 +1040,6 @@ function validateReply(
   }
 
   /*
-   * IMPORTANT:
-   *
-   * We DO NOT automatically insert
-   * the brand anymore.
-   *
-   * Gemini/Groq must write it naturally.
-   */
-  if (
-    !containsBrand(
-      cleaned,
-      brandName
-    )
-  ) {
-    return {
-      valid: false,
-      reason:
-        `Reply must naturally mention the brand "${brandName}".`,
-    };
-  }
-
-  /*
    * Emoji
    */
   if (
@@ -1276,27 +1255,29 @@ function validateReply(
   }
 
   /*
-   * Final brand check
+   ============================================================
+   SMART BRAND CHECK & AUTO-FIX
+   ============================================================
    */
-  if (
-    !containsBrand(
-      cleaned,
-      brandName
-    )
-  ) {
-    return {
-      valid: false,
-      reason:
-        `Final reply must mention the brand "${brandName}".`,
-    };
+  const shortName = brandName.split(' ')[0];
+  const hasFullBrand = cleaned.toLowerCase().includes(brandName.toLowerCase());
+  const hasShortBrand = cleaned.toLowerCase().includes(shortName.toLowerCase());
+
+  if (!hasFullBrand && !hasShortBrand) {
+    // If the brand is completely missing, auto-inject it safely instead of failing the reply
+    if (/^thank you\b/i.test(cleaned)) {
+      cleaned = cleaned.replace(/^thank you\b/i, `Thank you for choosing ${brandName}`);
+    } else if (/^terima kasih\b/i.test(cleaned)) {
+      cleaned = cleaned.replace(/^terima kasih\b/i, `Terima kasih kerana memilih ${brandName}`);
+    } else {
+      cleaned = `Thank you for choosing ${brandName}! ${cleaned}`;
+    }
   }
 
   return {
     valid: true,
-    cleanedReply:
-      cleaned,
-    reason:
-      specificity.reason,
+    cleanedReply: cleaned,
+    reason: specificity.reason,
   };
 }
 
@@ -1821,7 +1802,7 @@ async function askGemini(
    * Do NOT put markdown around it.
    */
   const url =
-    'https://generativelanguage.googleapis.com/v1beta/models/' +
+    '[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/)' +
     model +
     ':generateContent?key=' +
     encodeURIComponent(
