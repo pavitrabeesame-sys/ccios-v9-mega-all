@@ -52,10 +52,11 @@ CORE RULES:
 ============================================================
 */
 
-const GEMINI_QUOTA_COOLDOWN_MS =
-  24 * 60 * 60 * 1000;
+// Temporarily changed to 1 minute so you aren't locked out of Gemini while testing
+const GEMINI_QUOTA_COOLDOWN_MS = 60 * 1000; 
 
-const CONCURRENCY = 3;
+// Lowered to 1 to prevent hitting Groq's 8,000 Tokens-Per-Minute limit
+const CONCURRENCY = 1;
 
 /*
 ============================================================
