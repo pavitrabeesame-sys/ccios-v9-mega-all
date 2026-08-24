@@ -2235,98 +2235,136 @@ PROCESS ONE REVIEW
 ============================================================
 */
 
+/*
+============================================================
+PROCESS ONE REVIEW
+============================================================
+*/
+
 async function processReview(
   review,
   aiState,
   profileCache
 ) {
-  console.log(
-    `[Bulk AI] Processing review ${review?.id}`
-  );
+  console.log(`[Bulk AI] Processing review ${review?.id}`);
 
   /*
    * Never regenerate replied reviews.
    */
-  if (
-    review?.status ===
-    'REPLIED'
-  ) {
-    return {
-      success: false,
-      id: review?.id,
-      error:
-        'Review is already REPLIED.',
-    };
+  if (review?.status === 'REPLIED') {
+    return { success: false, id: review?.id, error: 'Review is already REPLIED.' };
   }
 
   try {
-    const reply =
-      await generateReviewReply(
-        review,
-        aiState,
-        profileCache
-      );
+    const reply = await generateReviewReply(review, aiState, profileCache);
 
     /*
      * FINAL VALIDATION
-     *
-     * This is the final gate before DB.
      */
-    const finalValidation =
-      validateReply(
-        reply,
-        review
-      );
+    const finalValidation = validateReply(reply, review);
 
-    if (
-      !finalValidation.valid
-    ) {
-      throw new Error(
-        `Final validation failed: ${finalValidation.reason}`
-      );
+    if (!finalValidation.valid) {
+      throw new Error(`Final validation failed: ${finalValidation.reason}`);
     }
 
-    await db.review.update({
-      where: {
+    const rating = Number(review?.rating) || 5;
+    const finalReply = finalValidation.cleanedReply;
+
+    /*
+     ============================================================
+     ⭐️ STRAIGHT-THROUGH PROCESSING (4 & 5 STAR AUTO-POST)
+     ============================================================
+     */
+    if (rating >= 4) {
+      try {
+        // Your live Vercel URL
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ccios-v9-mega-all.vercel.app';
+        
+        // Ping your existing Shopee Reply endpoint
+        const postResponse = await fetch(`${appUrl}/api/shopee/reply-comment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            reviewId: review.id, 
+            reply: finalReply 
+            // Note: If your endpoint expects "replyText" instead of "reply", change it here!
+          })
+        });
+
+        if (!postResponse.ok) {
+          throw new Error(`Shopee API responded with status: ${postResponse.status}`);
+        }
+
+        // If successfully posted to Shopee, mark as REPLIED in DB
+        await db.review.update({
+          where: { id: review.id },
+          data: {
+            aiReply: finalReply,
+            status: 'REPLIED',
+          },
+        });
+
+        console.log(`[Bulk AI] 🟢 AUTO-POSTED 4/5 Star Review: ${review.id}`);
+
+        return {
+          success: true,
+          id: review.id,
+          reply: finalReply,
+          status: 'REPLIED'
+        };
+
+      } catch (postError) {
+        console.warn(`[Bulk AI] ⚠️ Auto-post failed for ${review.id}, saving as GENERATED.`, getErrorMessage(postError));
+        
+        // Fallback: If Shopee API fails, save it as GENERATED so you can click it manually later
+        await db.review.update({
+          where: { id: review.id },
+          data: {
+            aiReply: finalReply,
+            status: 'GENERATED',
+          },
+        });
+
+        return {
+          success: true,
+          id: review.id,
+          reply: finalReply,
+          status: 'GENERATED' // Saved safely despite Shopee error
+        };
+      }
+    } 
+    
+    /*
+     ============================================================
+     🟡 1, 2, AND 3 STAR REVIEWS (MANUAL APPROVAL)
+     ============================================================
+     */
+    else {
+      await db.review.update({
+        where: { id: review.id },
+        data: {
+          aiReply: finalReply,
+          status: 'GENERATED',
+        },
+      });
+
+      console.log(`[Bulk AI] 🟡 SAVED FOR MANUAL APPROVAL (Low Rating): ${review.id}`);
+
+      return {
+        success: true,
         id: review.id,
-      },
-
-      data: {
-        aiReply:
-          finalValidation.cleanedReply,
-
-        status:
-          'GENERATED',
-      },
-    });
-
-    console.log(
-      '[Bulk AI] DATABASE SAVED:',
-      review.id
-    );
-
-    return {
-      success: true,
-      id: review.id,
-      reply:
-        finalValidation.cleanedReply,
-    };
+        reply: finalReply,
+        status: 'GENERATED'
+      };
+    }
 
   } catch (error) {
-    console.warn(
-      `[Bulk AI] FAILED ${review?.id}:`,
-      getErrorMessage(
-        error
-      )
-    );
+    console.warn(`[Bulk AI] FAILED ${review?.id}:`, getErrorMessage(error));
 
     return {
       success: false,
       id: review?.id,
-      error:
-        getErrorMessage(
-          error
-        ),
+      error: getErrorMessage(error),
     };
   }
 }
