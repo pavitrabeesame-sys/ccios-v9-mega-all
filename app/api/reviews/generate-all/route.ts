@@ -8,15 +8,37 @@ export const maxDuration = 300;
 /*
 ============================================================
 CCIOS — MASTER REVIEW AI GENERATION ENGINE
-2026 PRODUCTION HARDENED & BRAND-MAPPED
+2026 PRODUCTION
+FAST PARALLEL + BRAND MAPPED + SHOPEE AUTO REPLY
 ============================================================
 */
 
-const CONCURRENCY = 1;
+/*
+============================================================
+PERFORMANCE SETTINGS
+============================================================
+
+1 = safest / slowest
+3 = conservative
+5 = recommended
+8 = aggressive
+
+You can override with:
+CCIOS_AI_CONCURRENCY=5
+*/
+const CONCURRENCY = Math.max(
+  1,
+  Math.min(
+    Number(process.env.CCIOS_AI_CONCURRENCY || 5),
+    10
+  )
+);
+
+const AI_RETRY_DELAY_MS = 800;
 const GEMINI_QUOTA_COOLDOWN_MS = 60 * 1000;
 
-const START_2026 = new Date("2026-01-01T00:00:00.000Z");
-const START_2027 = new Date("2027-01-01T00:00:00.000Z");
+const START_2026 = new Date('2026-01-01T00:00:00.000Z');
+const START_2027 = new Date('2027-01-01T00:00:00.000Z');
 
 /*
 ============================================================
@@ -24,19 +46,22 @@ GLOBAL AI STATE & CONCURRENCY LOCK
 ============================================================
 */
 
-type CCIOSGeminiState = {
+type CCIOSAIState = {
   quotaUntil: number;
 };
 
-const GLOBAL_STATE_KEY = '__CCIOS_GEMINI_STATE__';
+const GLOBAL_STATE_KEY = '__CCIOS_AI_STATE__';
 
 const globalForCCIOS =
   globalThis as typeof globalThis & {
-    [GLOBAL_STATE_KEY]?: CCIOSGeminiState;
-    __CCIOS_BULK_JOB_STATE__?: { running: boolean; startedAt: number };
+    [GLOBAL_STATE_KEY]?: CCIOSAIState;
+    __CCIOS_BULK_JOB_STATE__?: {
+      running: boolean;
+      startedAt: number;
+    };
   };
 
-const GLOBAL_STATE: CCIOSGeminiState =
+const GLOBAL_STATE: CCIOSAIState =
   globalForCCIOS[GLOBAL_STATE_KEY] ?? {
     quotaUntil: 0,
   };
@@ -44,7 +69,7 @@ const GLOBAL_STATE: CCIOSGeminiState =
 globalForCCIOS[GLOBAL_STATE_KEY] = GLOBAL_STATE;
 
 const BULK_JOB_STATE =
-  globalForCCIOS.__CCIOS_BULK_JOB_STATE__ || {
+  globalForCCIOS.__CCIOS_BULK_JOB_STATE__ ?? {
     running: false,
     startedAt: 0,
   };
@@ -59,8 +84,15 @@ ERROR HELPERS
 
 function getErrorMessage(error: unknown): string {
   if (!error) return 'Unknown error';
-  if (typeof error === 'string') return error;
-  if (error instanceof Error) return error.message;
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
   try {
     return JSON.stringify(error);
   } catch {
@@ -70,6 +102,7 @@ function getErrorMessage(error: unknown): string {
 
 function isRateLimitError(error: unknown): boolean {
   const text = getErrorMessage(error).toLowerCase();
+
   return (
     text.includes('429') ||
     text.includes('quota') ||
@@ -79,7 +112,8 @@ function isRateLimitError(error: unknown): boolean {
     text.includes('too many requests') ||
     text.includes('tokens per day') ||
     text.includes('tokens per minute') ||
-    text.includes('tpd')
+    text.includes('tpd') ||
+    text.includes('rpm')
   );
 }
 
@@ -88,8 +122,22 @@ function isGeminiQuotaBlocked(): boolean {
 }
 
 function blockGeminiQuota(): void {
-  GLOBAL_STATE.quotaUntil = Date.now() + GEMINI_QUOTA_COOLDOWN_MS;
-  console.warn('[AI] Primary AI quota/rate-limit detected. Cooldown activated.');
+  GLOBAL_STATE.quotaUntil =
+    Date.now() + GEMINI_QUOTA_COOLDOWN_MS;
+
+  console.warn(
+    '[AI] Primary AI quota/rate-limit detected. Cooldown activated.'
+  );
+}
+
+/*
+============================================================
+SLEEP
+============================================================
+*/
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /*
@@ -99,52 +147,73 @@ BRAND REGISTRY & SHOP ID MAPPING
 */
 
 const SHOP_ID_TO_BRAND_MAP: Record<string, string> = {
-  "66854646": "Nicole Collection",
-  "282544493": "Hush Puppies Accessories",
-  "469553987": "RAV Design", // Update based on your actual store mappings
-  "1788012053": "Nicole Collection",
-  // Map any other Store_XXXXX IDs from your Prisma Studio view here
+  '66854646': 'Nicole Collection',
+  '282544493': 'Hush Puppies Accessories',
+  '469553987': 'RAV Design',
+  '1788012053': 'Nicole Collection',
 };
 
 const BRAND_ALIASES = [
   {
     canonical: 'RAV Design',
     match: ['RAV', 'RAV DESIGN'],
-    voice: 'Premium, rugged, sophisticated and adventurous. Focus on craftsmanship, durability, quality and timeless design.',
+    voice:
+      'Premium, rugged, sophisticated and adventurous. Focus on craftsmanship, durability, quality and timeless design.',
   },
   {
     canonical: 'Nicole Collection',
     match: ['NICOLE', 'NICOLE COLLECTION'],
-    voice: 'Elegant, feminine, modern and refined. Focus on flattering design, sophistication, effortless style and quality.',
+    voice:
+      'Elegant, feminine, modern and refined. Focus on flattering design, sophistication, effortless style and quality.',
   },
   {
     canonical: 'Hush Puppies Accessories',
-    match: ['HUSH PUPPIES', 'HUSH PUPPIES ACCESSORIES', 'HUSH'],
-    voice: 'Friendly, trustworthy and professional. Focus on comfort, quality, practicality and thoughtful everyday design.',
+    match: [
+      'HUSH PUPPIES',
+      'HUSH PUPPIES ACCESSORIES',
+      'HUSH',
+    ],
+    voice:
+      'Friendly, trustworthy and professional. Focus on comfort, quality, practicality and thoughtful everyday design.',
   },
   {
     canonical: 'Obermain',
     match: ['OBERMAIN', 'OBERMAIN ACCESSORIES'],
-    voice: 'Premium, refined and practical. Focus on craftsmanship, quality, sophisticated design and everyday functionality.',
+    voice:
+      'Premium, refined and practical. Focus on craftsmanship, quality, sophisticated design and everyday functionality.',
   },
   {
     canonical: 'Beverly Hills Polo Club',
-    match: ['BHPC', 'BEVERLY HILLS', 'BEVERLY HILLS POLO CLUB'],
-    voice: 'Classic, sporty, prestigious and casual luxury. Focus on heritage, comfort, timeless appeal and premium quality.',
+    match: [
+      'BHPC',
+      'BEVERLY HILLS',
+      'BEVERLY HILLS POLO CLUB',
+    ],
+    voice:
+      'Classic, sporty, prestigious and casual luxury. Focus on heritage, comfort, timeless appeal and premium quality.',
   },
   {
     canonical: 'JOHN LANGFORD OF LONDON',
-    match: ['JOHN LANGFORD', 'JOHN LANGFORD OF LONDON', 'LANGFORD'],
-    voice: 'Classic, formal and sophisticated. Focus on timeless style, craftsmanship, refinement and distinguished quality.',
+    match: [
+      'JOHN LANGFORD',
+      'JOHN LANGFORD OF LONDON',
+      'LANGFORD',
+    ],
+    voice:
+      'Classic, formal and sophisticated. Focus on timeless style, craftsmanship, refinement and distinguished quality.',
   },
 ];
 
 function normalizeBrand(rawBrand: unknown): string {
-  if (!rawBrand) return 'Nicole Collection';
+  if (!rawBrand) {
+    return 'Nicole Collection';
+  }
 
   const rawStr = String(rawBrand).trim();
 
-  // 1. Intercept numeric Shop IDs and map them to clean canonical brand names
+  /*
+  Numeric Shopee Store ID
+  */
   if (SHOP_ID_TO_BRAND_MAP[rawStr]) {
     return SHOP_ID_TO_BRAND_MAP[rawStr];
   }
@@ -161,34 +230,55 @@ function normalizeBrand(rawBrand: unknown): string {
     if (
       brand.match.some(
         (match) =>
-          cleaned.includes(match) || match.includes(cleaned)
+          cleaned.includes(match) ||
+          match.includes(cleaned)
       )
     ) {
       return brand.canonical;
     }
   }
 
-  // 2. Fallback if it's purely a number sequence but not in our dictionary map
+  /*
+  Unknown numeric Store ID
+  */
   if (/^\d+$/.test(rawStr)) {
     return 'Nicole Collection';
   }
 
-  return rawStr.replace(/\(.*?\)/g, '').trim() || 'Nicole Collection';
+  return (
+    rawStr.replace(/\(.*?\)/g, '').trim() ||
+    'Nicole Collection'
+  );
 }
 
 function getBrandVoice(brandName: string): string {
   const brand = BRAND_ALIASES.find(
-    (item) => item.canonical.toLowerCase() === brandName.toLowerCase()
+    (item) =>
+      item.canonical.toLowerCase() ===
+      brandName.toLowerCase()
   );
-  return brand?.voice || 'Professional, warm, natural and customer-focused.';
+
+  return (
+    brand?.voice ||
+    'Professional, warm, natural and customer-focused.'
+  );
 }
 
 function getBrandKeywords(brandName: string): string[] {
   const brand = BRAND_ALIASES.find(
-    (item) => item.canonical.toLowerCase() === brandName.toLowerCase()
+    (item) =>
+      item.canonical.toLowerCase() ===
+      brandName.toLowerCase()
   );
-  if (!brand) return [brandName.toLowerCase()];
-  return [brand.canonical.toLowerCase(), ...brand.match.map((v) => v.toLowerCase())];
+
+  if (!brand) {
+    return [brandName.toLowerCase()];
+  }
+
+  return [
+    brand.canonical.toLowerCase(),
+    ...brand.match.map((v) => v.toLowerCase()),
+  ];
 }
 
 /*
@@ -199,23 +289,64 @@ LANGUAGE DETECTION
 
 function detectLanguage(text: string): string {
   const value = String(text || '').trim();
-  if (!value) return 'English';
-  if (/[\u3400-\u9fff]/.test(value)) return 'Simplified Chinese';
+
+  if (!value) {
+    return 'English';
+  }
+
+  /*
+  Chinese
+  */
+  if (/[\u3400-\u9fff]/.test(value)) {
+    return 'Simplified Chinese';
+  }
 
   const malayWords = [
-    'sangat', 'cantik', 'bagus', 'terima', 'kasih', 'kualiti', 'barang',
-    'penghantaran', 'cepat', 'lambat', 'sesuai', 'puas', 'harga', 'boleh',
-    'kain', 'baju', 'kemas', 'murah', 'berbaloi', 'selesa', 'saiz', 'kecil',
-    'besar', 'servis', 'seller', 'penjual', 'sampai', 'parcel', 'bungkusan',
-    'yang', 'dan', 'untuk', 'dengan', 'baik',
+    'sangat',
+    'cantik',
+    'bagus',
+    'terima',
+    'kasih',
+    'kualiti',
+    'barang',
+    'penghantaran',
+    'cepat',
+    'lambat',
+    'sesuai',
+    'puas',
+    'harga',
+    'boleh',
+    'kain',
+    'baju',
+    'kemas',
+    'murah',
+    'berbaloi',
+    'selesa',
+    'saiz',
+    'kecil',
+    'besar',
+    'servis',
+    'seller',
+    'penjual',
+    'sampai',
+    'parcel',
+    'bungkusan',
+    'yang',
+    'dan',
+    'untuk',
+    'dengan',
+    'baik',
   ];
 
   const lower = value.toLowerCase();
+
   const matches = malayWords.filter((word) =>
     new RegExp(`\\b${word}\\b`, 'i').test(lower)
   ).length;
 
-  return matches >= 1 ? 'Malaysian Malay' : 'English';
+  return matches >= 1
+    ? 'Malaysian Malay'
+    : 'English';
 }
 
 /*
@@ -224,10 +355,26 @@ KNOWLEDGE BASE
 ============================================================
 */
 
-function filterRelevantKnowledge(knowledgeBase: unknown, reviewText: string): string {
-  if (!knowledgeBase) return 'No additional knowledge base information provided.';
-  const sections = String(knowledgeBase).split('===').map((s) => s.trim()).filter(Boolean);
-  if (!sections.length) return String(knowledgeBase);
+function filterRelevantKnowledge(
+  knowledgeBase: unknown,
+  reviewText: string
+): string {
+  if (!knowledgeBase) {
+    return 'No additional knowledge base information provided.';
+  }
+
+  const sections = String(knowledgeBase)
+    .split('===')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (!sections.length) {
+    return String(knowledgeBase);
+  }
+
+  /*
+  Keep prompt small for faster AI generation.
+  */
   return sections.slice(0, 3).join('\n===\n');
 }
 
@@ -238,62 +385,191 @@ REVIEW TOPICS
 */
 
 const REVIEW_TOPICS = {
-  quality: ['quality', 'kualiti', 'bagus', 'good', 'great', 'excellent', 'nice', 'berkualiti', 'baik', 'ok'],
-  fabric: ['fabric', 'kain', 'material', 'bahan', 'cotton', 'leather', 'kulit'],
-  design: ['design', 'rekaan', 'style', 'stylish', 'cantik', 'kemas', 'elegant'],
-  fit: ['fit', 'size', 'sizing', 'saiz', 'kecil', 'besar', 'tight', 'loose', 'ketat'],
-  service: ['service', 'servis', 'seller', 'penjual', 'staff', 'response'],
-  delivery: ['delivery', 'penghantaran', 'shipping', 'ship', 'sampai', 'courier', 'cepat', 'lambat'],
-  price: ['price', 'harga', 'murah', 'berbaloi', 'value', 'affordable'],
-  packaging: ['packaging', 'pembungkusan', 'package', 'bungkusan', 'kemas'],
-  comfort: ['comfort', 'comfortable', 'selesa', 'ringan', 'soft', 'lembut'],
+  quality: [
+    'quality',
+    'kualiti',
+    'bagus',
+    'good',
+    'great',
+    'excellent',
+    'nice',
+    'berkualiti',
+    'baik',
+    'ok',
+  ],
+
+  fabric: [
+    'fabric',
+    'kain',
+    'material',
+    'bahan',
+    'cotton',
+    'leather',
+    'kulit',
+  ],
+
+  design: [
+    'design',
+    'rekaan',
+    'style',
+    'stylish',
+    'cantik',
+    'kemas',
+    'elegant',
+  ],
+
+  fit: [
+    'fit',
+    'size',
+    'sizing',
+    'saiz',
+    'kecil',
+    'besar',
+    'tight',
+    'loose',
+    'ketat',
+  ],
+
+  service: [
+    'service',
+    'servis',
+    'seller',
+    'penjual',
+    'staff',
+    'response',
+  ],
+
+  delivery: [
+    'delivery',
+    'penghantaran',
+    'shipping',
+    'ship',
+    'sampai',
+    'courier',
+    'cepat',
+    'lambat',
+  ],
+
+  price: [
+    'price',
+    'harga',
+    'murah',
+    'berbaloi',
+    'value',
+    'affordable',
+  ],
+
+  packaging: [
+    'packaging',
+    'pembungkusan',
+    'package',
+    'bungkusan',
+    'kemas',
+  ],
+
+  comfort: [
+    'comfort',
+    'comfortable',
+    'selesa',
+    'ringan',
+    'soft',
+    'lembut',
+  ],
 } as const;
 
 type ReviewTopic = keyof typeof REVIEW_TOPICS;
 
-function detectReviewTopics(reviewText: string): ReviewTopic[] {
+function detectReviewTopics(
+  reviewText: string
+): ReviewTopic[] {
   const review = String(reviewText || '').toLowerCase();
+
   const topics: ReviewTopic[] = [];
-  for (const [topic, keywords] of Object.entries(REVIEW_TOPICS) as [ReviewTopic, readonly string[]][]) {
-    if (keywords.some((kw) => review.includes(kw))) {
+
+  for (
+    const [topic, keywords] of Object.entries(
+      REVIEW_TOPICS
+    ) as [
+      ReviewTopic,
+      readonly string[]
+    ][]
+  ) {
+    if (
+      keywords.some((keyword) =>
+        review.includes(keyword)
+      )
+    ) {
       topics.push(topic);
     }
   }
+
   return topics;
 }
 
-function getAddressedTopics(reply: string, detectedTopics: ReviewTopic[]): ReviewTopic[] {
+function getAddressedTopics(
+  reply: string,
+  detectedTopics: ReviewTopic[]
+): ReviewTopic[] {
   const response = String(reply || '').toLowerCase();
+
   return detectedTopics.filter((topic) =>
-    REVIEW_TOPICS[topic].some((kw) => response.includes(kw))
+    REVIEW_TOPICS[topic].some((keyword) =>
+      response.includes(keyword)
+    )
   );
 }
 
-function validateReviewSpecificity(reply: string, reviewText: string) {
-  if (!reviewText?.trim()) return { valid: true, reason: 'No written review.' };
-  const topics = detectReviewTopics(reviewText);
-  if (!topics.length) return { valid: true, reason: 'No identifiable topics.' };
+function validateReviewSpecificity(
+  reply: string,
+  reviewText: string
+) {
+  if (!reviewText?.trim()) {
+    return {
+      valid: true,
+      reason: 'No written review.',
+    };
+  }
 
-  const addressed = getAddressedTopics(reply, topics);
+  const topics = detectReviewTopics(reviewText);
+
+  if (!topics.length) {
+    return {
+      valid: true,
+      reason: 'No identifiable topics.',
+    };
+  }
+
+  const addressed = getAddressedTopics(
+    reply,
+    topics
+  );
+
   return {
     valid: true,
-    reason: `Topics addressed: ${addressed.join(', ') || 'general'}.`,
+    reason: `Topics addressed: ${
+      addressed.join(', ') || 'general'
+    }.`,
   };
 }
 
 /*
 ============================================================
-NO COMMENT TEMPLATES
+NO COMMENT TEMPLATE
 ============================================================
 */
 
-function getNoCommentTemplate(brandName: string, rating: number): string {
+function getNoCommentTemplate(
+  brandName: string,
+  rating: number
+): string {
   if (rating >= 4) {
     return `Thank you for choosing ${brandName}! We truly appreciate your support. 😊`;
   }
+
   if (rating === 3) {
     return `Thank you for choosing ${brandName} and for your feedback. We hope to serve you even better next time. 😊`;
   }
+
   return `Thank you for choosing ${brandName}. We are sorry your experience did not fully meet expectations. 🙏`;
 }
 
@@ -305,13 +581,20 @@ CLEANING & VALIDATION
 
 function cleanReply(text: unknown): string {
   let cleaned = String(text || '').trim();
+
   cleaned = cleaned
-    .replace(/^```(?:text|plaintext|markdown)?\s*/i, '')
+    .replace(
+      /^```(?:text|plaintext|markdown)?\s*/i,
+      ''
+    )
     .replace(/\s*```$/i, '')
     .trim();
 
   cleaned = cleaned
-    .replace(/^(reply|response|customer reply|ai reply|final reply)\s*:\s*/i, '')
+    .replace(
+      /^(reply|response|customer reply|ai reply|final reply)\s*:\s*/i,
+      ''
+    )
     .replace(/^["“”']+/, '')
     .replace(/["“”']+$/, '')
     .replace(/\s+/g, ' ')
@@ -321,62 +604,139 @@ function cleanReply(text: unknown): string {
 }
 
 function containsEmoji(text: string): boolean {
-  return /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(text);
+  return /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(
+    text
+  );
 }
 
 function countEmojis(text: string): number {
-  const matches = String(text || '').match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu);
+  const matches = String(text || '').match(
+    /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu
+  );
+
   return matches ? matches.length : 0;
 }
 
-function isBrandHeader(reply: string, brandName: string): boolean {
-  const escaped = String(brandName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${escaped}\\s*[:\\-]\\s*`, 'i').test(reply.trim());
+function isBrandHeader(
+  reply: string,
+  brandName: string
+): boolean {
+  const escaped = String(brandName).replace(
+    /[.*+?^${}()|[\]\\]/g,
+    '\\$&'
+  );
+
+  return new RegExp(
+    `^${escaped}\\s*[:\\-]\\s*`,
+    'i'
+  ).test(reply.trim());
 }
 
-function validateReply(reply: unknown, review: any) {
-  if (!reply || typeof reply !== 'string') {
-    return { valid: false, reason: 'Empty AI response.' };
+function validateReply(
+  reply: unknown,
+  review: any
+) {
+  if (
+    !reply ||
+    typeof reply !== 'string'
+  ) {
+    return {
+      valid: false,
+      reason: 'Empty AI response.',
+    };
   }
 
   let cleaned = cleanReply(reply);
-  if (!cleaned) return { valid: false, reason: 'Empty response after cleaning.' };
 
-  if (cleaned.includes('```') || cleaned.includes('**')) {
-    return { valid: false, reason: 'Markdown detected.' };
+  if (!cleaned) {
+    return {
+      valid: false,
+      reason: 'Empty response after cleaning.',
+    };
   }
 
-  const brandName = normalizeBrand(review?.brand || review?.storeName);
+  if (
+    cleaned.includes('```') ||
+    cleaned.includes('**')
+  ) {
+    return {
+      valid: false,
+      reason: 'Markdown detected.',
+    };
+  }
+
+  const brandName = normalizeBrand(
+    review?.brand ||
+      review?.storeName
+  );
+
   if (isBrandHeader(cleaned, brandName)) {
-    return { valid: false, reason: 'Brand header detected.' };
+    return {
+      valid: false,
+      reason: 'Brand header detected.',
+    };
   }
 
+  /*
+  Guarantee emoji
+  */
   if (!containsEmoji(cleaned)) {
     cleaned += ' 😊';
   }
 
   if (countEmojis(cleaned) > 2) {
-    return { valid: false, reason: 'More than 2 emojis.' };
+    return {
+      valid: false,
+      reason: 'More than 2 emojis.',
+    };
   }
 
+  /*
+  Guarantee punctuation
+  */
   if (!/[.!?。！？]$/.test(cleaned)) {
     cleaned += '.';
   }
 
   if (cleaned.length < 15) {
-    return { valid: false, reason: 'Reply is too short.' };
+    return {
+      valid: false,
+      reason: 'Reply is too short.',
+    };
   }
 
-  const specificity = validateReviewSpecificity(cleaned, String(review?.reviewText || ''));
+  const specificity =
+    validateReviewSpecificity(
+      cleaned,
+      String(review?.reviewText || '')
+    );
 
-  const keywords = getBrandKeywords(brandName);
-  const hasBrand = keywords.some((kw) => cleaned.toLowerCase().includes(kw));
+  /*
+  Guarantee brand mention
+  */
+  const keywords =
+    getBrandKeywords(brandName);
+
+  const hasBrand = keywords.some(
+    (keyword) =>
+      cleaned
+        .toLowerCase()
+        .includes(keyword)
+  );
 
   if (!hasBrand) {
     if (/^thank you\b/i.test(cleaned)) {
-      cleaned = cleaned.replace(/^thank you\b/i, `Thank you for choosing ${brandName}`);
-    } else if (/^terima kasih\b/i.test(cleaned)) {
-      cleaned = cleaned.replace(/^terima kasih\b/i, `Terima kasih kerana memilih ${brandName}`);
+      cleaned = cleaned.replace(
+        /^thank you\b/i,
+        `Thank you for choosing ${brandName}`
+      );
+    } else if (
+      /^terima kasih\b/i.test(cleaned)
+    ) {
+      cleaned = cleaned.replace(
+        /^terima kasih\b/i,
+        `Terima kasih kerana memilih ${brandName}`
+      );
     } else {
       cleaned = `Thank you for choosing ${brandName}! ${cleaned}`;
     }
@@ -395,65 +755,163 @@ BRAND PROFILE LOADER
 ============================================================
 */
 
-async function loadBrandProfile(review: any, cache: Map<string, any>) {
-  const rawBrand = review?.brand || review?.storeName || '';
-  if (!rawBrand) return null;
+async function loadBrandProfile(
+  review: any,
+  cache: Map<string, any>
+) {
+  const rawBrand =
+    review?.brand ||
+    review?.storeName ||
+    '';
 
-  const cacheKey = String(rawBrand).trim().toUpperCase();
-  if (cache.has(cacheKey)) return cache.get(cacheKey);
+  if (!rawBrand) {
+    return null;
+  }
+
+  const cacheKey =
+    String(rawBrand)
+      .trim()
+      .toUpperCase();
+
+  /*
+  Instant cache hit
+  */
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
 
   try {
-    const normalized = normalizeBrand(rawBrand);
-    let brand = await db.brand.findFirst({
-      where: { name: { equals: String(rawBrand), mode: 'insensitive' } },
-      include: { AIProfile: true },
-    });
+    const normalized =
+      normalizeBrand(rawBrand);
 
-    if (!brand && normalized !== rawBrand) {
-      brand = await db.brand.findFirst({
-        where: { name: { equals: normalized, mode: 'insensitive' } },
-        include: { AIProfile: true },
+    let brand =
+      await db.brand.findFirst({
+        where: {
+          name: {
+            equals: String(rawBrand),
+            mode: 'insensitive',
+          },
+        },
+        include: {
+          AIProfile: true,
+        },
       });
+
+    if (
+      !brand &&
+      normalized !== rawBrand
+    ) {
+      brand =
+        await db.brand.findFirst({
+          where: {
+            name: {
+              equals: normalized,
+              mode: 'insensitive',
+            },
+          },
+          include: {
+            AIProfile: true,
+          },
+        });
     }
 
-    const profile = brand?.AIProfile || null;
+    const profile =
+      brand?.AIProfile || null;
+
     cache.set(cacheKey, profile);
+
     return profile;
   } catch (error) {
-    console.warn('[AI] Unable to load brand AI profile:', getErrorMessage(error));
+    console.warn(
+      '[AI] Unable to load brand AI profile:',
+      getErrorMessage(error)
+    );
+
     cache.set(cacheKey, null);
+
     return null;
   }
 }
 
 /*
 ============================================================
-PROMPT BUILDER (WITH HALLUCINATION DEFENSE)
+PROMPT BUILDER
 ============================================================
 */
 
 function buildPrompt(
   review: any,
   aiProfile: any,
-  options: { isRetry?: boolean; retryReason?: string } = {}
+  options: {
+    isRetry?: boolean;
+    retryReason?: string;
+  } = {}
 ): string {
-  const { isRetry = false, retryReason = '' } = options;
-  const reviewText = String(review?.reviewText || '').trim();
-  const rating = Number(review?.rating) || 5;
-  const brandName = normalizeBrand(review?.brand || review?.storeName);
-  const language = detectLanguage(reviewText);
-  const knowledge = filterRelevantKnowledge(aiProfile?.knowledgeBase || '', reviewText);
+  const {
+    isRetry = false,
+    retryReason = '',
+  } = options;
 
+  const reviewText =
+    String(
+      review?.reviewText || ''
+    ).trim();
+
+  const rating =
+    Number(review?.rating) || 5;
+
+  const brandName =
+    normalizeBrand(
+      review?.brand ||
+        review?.storeName
+    );
+
+  const language =
+    detectLanguage(reviewText);
+
+  const knowledge =
+    filterRelevantKnowledge(
+      aiProfile?.knowledgeBase || '',
+      reviewText
+    );
+
+  const brandVoice =
+    getBrandVoice(brandName);
+
+  /*
+  No written comment
+  */
   if (!reviewText) {
     return `
 You are the official customer service representative for ${brandName}.
-The customer left no written comment. Rating: ${rating}/5.
-Write a short customer-facing reply mentioning "${brandName}" with exactly 1 natural emoji. No markdown. Return ONLY the reply text. Language: ${language}
+
+BRAND VOICE:
+${brandVoice}
+
+The customer left no written comment.
+
+CUSTOMER RATING:
+${rating}/5
+
+Write a short, warm customer-facing reply.
+
+Rules:
+- Mention "${brandName}" naturally.
+- Exactly 1 natural emoji.
+- No markdown.
+- No quotation marks.
+- No headings.
+- Return ONLY the reply text.
+- Language: ${language}
 `.trim();
   }
 
   return `
 You are the official customer service representative for ${brandName}.
+
+BRAND VOICE:
+${brandVoice}
+
 You are replying to a REAL customer review.
 
 CUSTOMER RATING:
@@ -465,120 +923,353 @@ CUSTOMER REVIEW:
 CUSTOMER LANGUAGE:
 ${language}
 
-CRITICAL RULES (ANTI-HALLUCINATION):
-- Reply specifically and naturally to what the customer actually wrote.
-- STRICTLY DO NOT invent, assume, or introduce specific body measurements (such as weight in kg, height in cm), specific product attributes, unmentioned materials, or fabric thickness unless explicitly stated by the customer in their review.
-- Keep the response warm, natural, concise (1-2 sentences), and include 1-2 natural emojis.
-- The exact brand name "${brandName}" must appear naturally.
-- Return ONLY the final customer-facing reply text with no markdown, headings, or quotation marks.
+CRITICAL RULES:
+
+1. Reply specifically and naturally to what the customer actually wrote.
+
+2. DO NOT invent information.
+
+3. STRICTLY DO NOT invent:
+- body measurements
+- weight
+- height
+- size measurements
+- materials
+- fabric thickness
+- product features
+- product specifications
+- delivery claims
+- product usage claims
+- guarantees
+
+Unless explicitly stated by the customer.
+
+4. Keep the reply warm and natural.
+
+5. Keep it concise:
+1-2 sentences.
+
+6. Use 1-2 natural emojis.
+
+7. The exact brand name "${brandName}" must appear naturally.
+
+8. Do NOT start with a brand header.
+
+9. Do NOT use markdown.
+
+10. Do NOT use quotation marks.
+
+11. Return ONLY the final customer-facing reply.
 
 RELEVANT KNOWLEDGE:
 ${knowledge}
 
-${isRetry ? `RETRY NOTICE: Previous response failed validation (${retryReason}). Correct the issue and return a valid reply.` : ''}
+${
+  isRetry
+    ? `
+RETRY NOTICE:
+The previous response failed validation.
+
+Failure reason:
+${retryReason}
+
+Correct the issue and return ONLY a valid customer reply.
+`
+    : ''
+}
 `.trim();
 }
 
 /*
 ============================================================
-AI GENERATION ENGINE
+AI GENERATION
 ============================================================
 */
 
-async function generateWithAI(review: any, profileCache: Map<string, any>): Promise<string> {
-  const reviewText = String(review?.reviewText || '').trim();
-  const brandName = normalizeBrand(review?.brand || review?.storeName);
+async function callGroqWithRetry(
+  prompt: string
+): Promise<string> {
+  try {
+    /*
+    If the primary AI provider is known to be blocked,
+    still allow Groq to handle the request.
+    */
+    const result =
+      await askGroq(prompt);
 
+    return String(result || '').trim();
+  } catch (error) {
+    if (isRateLimitError(error)) {
+      blockGeminiQuota();
+    }
+
+    /*
+    Small retry delay.
+    */
+    await sleep(AI_RETRY_DELAY_MS);
+
+    /*
+    One controlled retry.
+    */
+    try {
+      const retryResult =
+        await askGroq(prompt);
+
+      return String(
+        retryResult || ''
+      ).trim();
+    } catch (retryError) {
+      throw retryError;
+    }
+  }
+}
+
+async function generateWithAI(
+  review: any,
+  profileCache: Map<string, any>
+): Promise<string> {
+  const reviewText =
+    String(
+      review?.reviewText || ''
+    ).trim();
+
+  const brandName =
+    normalizeBrand(
+      review?.brand ||
+        review?.storeName
+    );
+
+  /*
+  No comment = no AI call.
+  This saves API tokens and time.
+  */
   if (!reviewText) {
-    return getNoCommentTemplate(brandName, Number(review?.rating) || 5);
+    return getNoCommentTemplate(
+      brandName,
+      Number(review?.rating) || 5
+    );
   }
 
-  const aiProfile = await loadBrandProfile(review, profileCache);
+  const aiProfile =
+    await loadBrandProfile(
+      review,
+      profileCache
+    );
 
   try {
-    const prompt = buildPrompt(review, aiProfile);
-    const rawReply = await askGroq(prompt);
-    const validation = validateReply(rawReply, review);
+    const prompt =
+      buildPrompt(
+        review,
+        aiProfile
+      );
+
+    const rawReply =
+      await callGroqWithRetry(
+        prompt
+      );
+
+    const validation =
+      validateReply(
+        rawReply,
+        review
+      );
 
     if (validation.valid) {
       return validation.cleanedReply;
     }
 
-    const retryPrompt = buildPrompt(review, aiProfile, { isRetry: true, retryReason: validation.reason });
-    const retryReply = await askGroq(retryPrompt);
-    const retryValidation = validateReply(retryReply, review);
+    /*
+    Validation retry
+    */
+    const retryPrompt =
+      buildPrompt(
+        review,
+        aiProfile,
+        {
+          isRetry: true,
+          retryReason:
+            validation.reason,
+        }
+      );
+
+    const retryReply =
+      await callGroqWithRetry(
+        retryPrompt
+      );
+
+    const retryValidation =
+      validateReply(
+        retryReply,
+        review
+      );
 
     if (retryValidation.valid) {
       return retryValidation.cleanedReply;
     }
 
-    throw new Error(`AI validation failed: ${retryValidation.reason}`);
+    throw new Error(
+      `AI validation failed: ${retryValidation.reason}`
+    );
   } catch (error) {
-    console.warn('[AI Generation fallback triggered]:', getErrorMessage(error));
-    return getNoCommentTemplate(brandName, Number(review?.rating) || 5);
+    console.warn(
+      '[AI Generation fallback triggered]:',
+      getErrorMessage(error)
+    );
+
+    return getNoCommentTemplate(
+      brandName,
+      Number(review?.rating) || 5
+    );
   }
 }
 
 /*
 ============================================================
-SHOPEE COMMENT ID HELPER
+SHOPEE COMMENT ID
 ============================================================
 */
 
-function getCommentId(review: any): number | null {
-  if (!review) return null;
-  const possibleValues = [review.commentId, review.shopeeCommentId, review.comment_id, review.shopee_comment_id];
-  for (const value of possibleValues) {
-    if (value === null || value === undefined || String(value).trim() === '') continue;
-    const num = Number(value);
-    if (Number.isFinite(num) && num > 0) return num;
+function getCommentId(
+  review: any
+): number | null {
+  if (!review) {
+    return null;
   }
+
+  const possibleValues = [
+    review.commentId,
+    review.shopeeCommentId,
+    review.comment_id,
+    review.shopee_comment_id,
+  ];
+
+  for (
+    const value of possibleValues
+  ) {
+    if (
+      value === null ||
+      value === undefined ||
+      String(value).trim() === ''
+    ) {
+      continue;
+    }
+
+    const num = Number(value);
+
+    if (
+      Number.isFinite(num) &&
+      num > 0
+    ) {
+      return num;
+    }
+  }
+
   return null;
 }
 
 /*
 ============================================================
-SHOPEE AUTO POST (WITH DUPLICATE IDEMPOTENCY)
+SHOPEE AUTO POST
 ============================================================
 */
 
-async function autoPostReply(review: any, reply: string) {
-  const commentId = getCommentId(review);
+async function autoPostReply(
+  review: any,
+  reply: string
+) {
+  const commentId =
+    getCommentId(review);
+
   if (!commentId) {
-    throw new Error('No Shopee comment ID found on this review.');
+    throw new Error(
+      'No Shopee comment ID found on this review.'
+    );
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || '[https://ccios-v9-mega-all.vercel.app](https://ccios-v9-mega-all.vercel.app)';
-  const endpoint = `${appUrl.replace(/\/$/, '')}/api/shopee/reply-comment`;
+  /*
+  FIXED:
+  Do NOT put Markdown inside the URL fallback.
+  */
+  const appUrl =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    'https://ccios-v9-mega-all.vercel.app';
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ commentId, comment: reply }),
-    cache: 'no-store',
-  });
+  const endpoint =
+    `${appUrl.replace(/\/$/, '')}/api/shopee/reply-comment`;
 
-  const responseText = await response.text();
+  const response =
+    await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type':
+          'application/json',
+      },
+      body: JSON.stringify({
+        commentId,
+        comment: reply,
+      }),
+      cache: 'no-store',
+    });
+
+  const responseText =
+    await response.text();
+
   let data: any = null;
+
   try {
-    data = JSON.parse(responseText);
+    data =
+      JSON.parse(responseText);
   } catch {
     data = responseText;
   }
 
   if (!response.ok) {
-    throw new Error(`Shopee endpoint failed (${response.status}): ${typeof data === 'string' ? data : JSON.stringify(data)}`);
+    throw new Error(
+      `Shopee endpoint failed (${response.status}): ${
+        typeof data === 'string'
+          ? data
+          : JSON.stringify(data)
+      }`
+    );
   }
 
-  if (data && typeof data === 'object') {
-    const errorString = JSON.stringify(data).toLowerCase();
-    if (errorString.includes('duplicate_request') || errorString.includes('already replied')) {
-      return { success: true, alreadyReplied: true };
+  if (
+    data &&
+    typeof data === 'object'
+  ) {
+    const errorString =
+      JSON.stringify(data)
+        .toLowerCase();
+
+    if (
+      errorString.includes(
+        'duplicate_request'
+      ) ||
+      errorString.includes(
+        'already replied'
+      ) ||
+      errorString.includes(
+        'already_replied'
+      )
+    ) {
+      return {
+        success: true,
+        alreadyReplied: true,
+      };
     }
 
-    const errorCode = data.error ?? data.error_code ?? data.code;
-    if (errorCode && String(errorCode) !== '0') {
-      throw new Error(`Shopee error: ${JSON.stringify(data)}`);
+    const errorCode =
+      data.error ??
+      data.error_code ??
+      data.code;
+
+    if (
+      errorCode &&
+      String(errorCode) !== '0'
+    ) {
+      throw new Error(
+        `Shopee error: ${JSON.stringify(data)}`
+      );
     }
   }
 
@@ -591,24 +1282,86 @@ PROCESS ONE REVIEW
 ============================================================
 */
 
-async function processReview(review: any, profileCache: Map<string, any>) {
-  if (review?.status === 'REPLIED') {
-    return { success: false, id: review?.id, error: 'Review is already REPLIED.' };
+async function processReview(
+  review: any,
+  profileCache: Map<string, any>
+) {
+  /*
+  Safety check
+  */
+  if (
+    review?.status === 'REPLIED'
+  ) {
+    return {
+      success: false,
+      id: review?.id,
+      error:
+        'Review is already REPLIED.',
+    };
   }
 
   try {
-    const reply = await generateWithAI(review, profileCache);
-    const validation = validateReply(reply, review);
-    const finalReply = validation.valid ? validation.cleanedReply : getNoCommentTemplate(normalizeBrand(review?.brand), Number(review?.rating) || 5);
-    const rating = Number(review?.rating) || 5;
+    /*
+    Generate AI reply
+    */
+    const reply =
+      await generateWithAI(
+        review,
+        profileCache
+      );
 
+    /*
+    Final validation
+    */
+    const validation =
+      validateReply(
+        reply,
+        review
+      );
+
+    const finalReply =
+      validation.valid
+        ? validation.cleanedReply
+        : getNoCommentTemplate(
+            normalizeBrand(
+              review?.brand ||
+                review?.storeName
+            ),
+            Number(
+              review?.rating
+            ) || 5
+          );
+
+    const rating =
+      Number(review?.rating) || 5;
+
+    /*
+    ================================================
+    4-5 STAR = AUTO POST
+    ================================================
+    */
     if (rating >= 4) {
       try {
-        const postResult = await autoPostReply(review, finalReply);
-        
+        const postResult =
+          await autoPostReply(
+            review,
+            finalReply
+          );
+
+        /*
+        DB update after successful Shopee post
+        */
         await db.review.update({
-          where: { id: review.id },
-          data: { aiReply: finalReply, status: 'REPLIED', repliedAt: new Date(), repliedBy: 'AI' },
+          where: {
+            id: review.id,
+          },
+
+          data: {
+            aiReply: finalReply,
+            status: 'REPLIED',
+            repliedAt: new Date(),
+            repliedBy: 'AI',
+          },
         });
 
         return {
@@ -620,152 +1373,534 @@ async function processReview(review: any, profileCache: Map<string, any>) {
           postResult,
         };
       } catch (postError) {
-        const errStr = getErrorMessage(postError).toLowerCase();
-        
-        if (errStr.includes('duplicate_request') || errStr.includes('already replied') || errStr.includes('duplicate')) {
+        const errStr =
+          getErrorMessage(
+            postError
+          ).toLowerCase();
+
+        /*
+        Shopee already replied.
+        Sync local DB.
+        */
+        if (
+          errStr.includes(
+            'duplicate_request'
+          ) ||
+          errStr.includes(
+            'already replied'
+          ) ||
+          errStr.includes(
+            'already_replied'
+          ) ||
+          errStr.includes(
+            'duplicate'
+          )
+        ) {
           await db.review.update({
-            where: { id: review.id },
-            data: { aiReply: finalReply, status: 'REPLIED', repliedAt: new Date(), repliedBy: 'AI_DUPLICATE_SYNC' },
+            where: {
+              id: review.id,
+            },
+
+            data: {
+              aiReply: finalReply,
+              status: 'REPLIED',
+              repliedAt: new Date(),
+              repliedBy:
+                'AI_DUPLICATE_SYNC',
+            },
           });
-          return { success: true, id: review.id, status: 'REPLIED', alreadyReplied: true, reply: finalReply };
+
+          return {
+            success: true,
+            id: review.id,
+            status: 'REPLIED',
+            alreadyReplied: true,
+            reply: finalReply,
+          };
         }
 
+        /*
+        AI generated but Shopee posting failed.
+        Keep for manual retry.
+        */
         await db.review.update({
-          where: { id: review.id },
-          data: { aiReply: finalReply, status: 'GENERATED' },
+          where: {
+            id: review.id,
+          },
+
+          data: {
+            aiReply: finalReply,
+            status: 'GENERATED',
+          },
         });
 
-        return { success: true, id: review.id, reply: finalReply, status: 'GENERATED', posted: false, postError: getErrorMessage(postError) };
+        return {
+          success: true,
+          id: review.id,
+          reply: finalReply,
+          status: 'GENERATED',
+          posted: false,
+          postError:
+            getErrorMessage(
+              postError
+            ),
+        };
       }
     }
 
+    /*
+    ================================================
+    1-3 STAR = GENERATE ONLY
+    ================================================
+    */
     await db.review.update({
-      where: { id: review.id },
-      data: { aiReply: finalReply, status: 'GENERATED' },
+      where: {
+        id: review.id,
+      },
+
+      data: {
+        aiReply: finalReply,
+        status: 'GENERATED',
+      },
     });
 
-    return { success: true, id: review.id, reply: finalReply, status: 'GENERATED', posted: false };
+    return {
+      success: true,
+      id: review.id,
+      reply: finalReply,
+      status: 'GENERATED',
+      posted: false,
+    };
   } catch (error) {
-    return { success: false, id: review?.id, error: getErrorMessage(error) };
+    return {
+      success: false,
+      id: review?.id,
+      error:
+        getErrorMessage(error),
+    };
   }
 }
 
 /*
 ============================================================
-BATCH PROCESSOR
+FAST PARALLEL BATCH PROCESSOR
+============================================================
+
+Old:
+1 review -> wait -> next review
+
+New:
+5 reviews -> process together
+then next 5
+then next 5...
 ============================================================
 */
 
-async function processInBatches(candidates: any[], profileCache: Map<string, any>) {
+async function processInBatches(
+  candidates: any[],
+  profileCache: Map<string, any>
+) {
   const results: any[] = [];
-  for (let i = 0; i < candidates.length; i += CONCURRENCY) {
-    const batch = candidates.slice(i, i + CONCURRENCY);
-    const batchResults = await Promise.all(
-      batch.map((review) => processReview(review, profileCache))
+
+  for (
+    let i = 0;
+    i < candidates.length;
+    i += CONCURRENCY
+  ) {
+    const batch =
+      candidates.slice(
+        i,
+        i + CONCURRENCY
+      );
+
+    console.log(
+      `[AI] Processing ${i + 1}-${Math.min(
+        i + CONCURRENCY,
+        candidates.length
+      )} / ${candidates.length} | concurrency=${CONCURRENCY}`
     );
-    results.push(...batchResults);
+
+    const batchResults =
+      await Promise.all(
+        batch.map((review) =>
+          processReview(
+            review,
+            profileCache
+          )
+        )
+      );
+
+    results.push(
+      ...batchResults
+    );
   }
+
   return results;
 }
 
 /*
 ============================================================
-POST HANDLER (API ROUTE)
+POST HANDLER
 ============================================================
 */
 
-export async function POST(req: Request) {
-  if (BULK_JOB_STATE.running) {
+export async function POST(
+  req: Request
+) {
+  /*
+  Prevent duplicate bulk jobs
+  */
+  if (
+    BULK_JOB_STATE.running
+  ) {
     return NextResponse.json(
-      { success: false, error: 'AI generation already running', code: 'BULK_JOB_ALREADY_RUNNING' },
-      { status: 409 }
+      {
+        success: false,
+        error:
+          'AI generation already running',
+        code:
+          'BULK_JOB_ALREADY_RUNNING',
+      },
+      {
+        status: 409,
+      }
     );
   }
 
-  BULK_JOB_STATE.running = true;
-  BULK_JOB_STATE.startedAt = Date.now();
+  BULK_JOB_STATE.running =
+    true;
+
+  BULK_JOB_STATE.startedAt =
+    Date.now();
 
   try {
+    /*
+    ================================================
+    REQUEST BODY
+    ================================================
+    */
+
     let body: any = {};
+
     try {
       body = await req.json();
     } catch {
       body = {};
     }
 
-    const ids = Array.isArray(body.ids) ? body.ids : [];
-    const requestedLimit = Number(body.limit) > 0 ? Number(body.limit) : null;
-    const hasExplicitIds = ids.length > 0;
-    const selectedBrand = body.brand ?? body.brandName ?? null;
-    const isAllBrands = !selectedBrand || String(selectedBrand).trim().toUpperCase() === 'ALL';
+    const ids =
+      Array.isArray(body.ids)
+        ? body.ids
+        : [];
+
+    const requestedLimit =
+      Number(body.limit) > 0
+        ? Number(body.limit)
+        : null;
+
+    const hasExplicitIds =
+      ids.length > 0;
+
+    const selectedBrand =
+      body.brand ??
+      body.brandName ??
+      null;
+
+    const isAllBrands =
+      !selectedBrand ||
+      String(selectedBrand)
+        .trim()
+        .toUpperCase() ===
+        'ALL';
+
+    /*
+    ================================================
+    DATE FILTER
+    ================================================
+    */
 
     const baseDateFilter = {
-      createdAt: { gte: START_2026, lt: START_2027 },
+      createdAt: {
+        gte: START_2026,
+        lt: START_2027,
+      },
     };
 
     let candidates: any[] = [];
 
+    /*
+    ================================================
+    EXPLICIT IDS
+    ================================================
+    */
+
     if (hasExplicitIds) {
-      const uniqueIds = [...new Set(ids.filter((id: unknown) => typeof id === 'string' && id.trim() !== ''))];
+      const uniqueIds = [
+        ...new Set(
+          ids.filter(
+            (id: unknown) =>
+              typeof id === 'string' &&
+              id.trim() !== ''
+          )
+        ),
+      ];
+
       if (!uniqueIds.length) {
-        return NextResponse.json({ success: true, generated: 0, autoPosted: 0, manualApproval: 0, failed: 0, total: 0, errors: [] });
+        return NextResponse.json({
+          success: true,
+          generated: 0,
+          autoPosted: 0,
+          manualApproval: 0,
+          failed: 0,
+          total: 0,
+          errors: [],
+        });
       }
 
-      candidates = await db.review.findMany({
-        where: {
-          id: { in: uniqueIds },
-          status: { notIn: ['REPLIED', 'GENERATED'] },
-          ...baseDateFilter,
-        },
-        take: requestedLimit ?? uniqueIds.length,
-      });
+      candidates =
+        await db.review.findMany({
+          where: {
+            id: {
+              in: uniqueIds,
+            },
+
+            status: {
+              notIn: [
+                'REPLIED',
+                'GENERATED',
+              ],
+            },
+
+            ...baseDateFilter,
+          },
+
+          take:
+            requestedLimit ??
+            uniqueIds.length,
+        });
     } else {
+      /*
+      ================================================
+      ALL REVIEWS / BRAND FILTER
+      ================================================
+      */
+
       const whereClause: any = {
-        status: { notIn: ['GENERATED', 'REPLIED'] },
+        status: {
+          notIn: [
+            'GENERATED',
+            'REPLIED',
+          ],
+        },
+
         ...baseDateFilter,
       };
 
       if (!isAllBrands) {
         whereClause.OR = [
-          { brand: { contains: String(selectedBrand), mode: 'insensitive' } },
-          { storeName: { contains: String(selectedBrand), mode: 'insensitive' } },
+          {
+            brand: {
+              contains:
+                String(
+                  selectedBrand
+                ),
+              mode: 'insensitive',
+            },
+          },
+
+          {
+            storeName: {
+              contains:
+                String(
+                  selectedBrand
+                ),
+              mode: 'insensitive',
+            },
+          },
         ];
       }
 
-      candidates = await db.review.findMany({
-        where: whereClause,
-        orderBy: { createdAt: 'desc' },
-        ...(requestedLimit ? { take: requestedLimit } : {}),
+      candidates =
+        await db.review.findMany({
+          where: whereClause,
+
+          orderBy: {
+            createdAt: 'desc',
+          },
+
+          ...(requestedLimit
+            ? {
+                take:
+                  requestedLimit,
+              }
+            : {}),
+        });
+    }
+
+    /*
+    ================================================
+    NOTHING TO PROCESS
+    ================================================
+    */
+
+    if (!candidates.length) {
+      return NextResponse.json({
+        success: true,
+        generated: 0,
+        autoPosted: 0,
+        manualApproval: 0,
+        failed: 0,
+        total: 0,
+        errors: [],
       });
     }
 
-    if (!candidates.length) {
-      return NextResponse.json({ success: true, generated: 0, autoPosted: 0, manualApproval: 0, failed: 0, total: 0, errors: [] });
-    }
+    /*
+    ================================================
+    PROFILE CACHE
+    ================================================
+    */
 
-    const profileCache = new Map<string, any>();
-    const results = await processInBatches(candidates, profileCache);
+    const profileCache =
+      new Map<string, any>();
 
-    const successful = results.filter((r) => r.success === true);
-    const failed = results.filter((r) => r.success !== true);
-    const autoPosted = successful.filter((r) => r.status === 'REPLIED' && r.posted === true);
-    const manualApproval = successful.filter((r) => r.status === 'GENERATED');
-    const errors = failed.map((r) => ({ id: r.id, error: r.error }));
+    /*
+    ================================================
+    PROCESS IN PARALLEL
+    ================================================
+    */
+
+    const startedAt =
+      Date.now();
+
+    const results =
+      await processInBatches(
+        candidates,
+        profileCache
+      );
+
+    const duration =
+      Date.now() - startedAt;
+
+    /*
+    ================================================
+    RESULT COUNTS
+    ================================================
+    */
+
+    const successful =
+      results.filter(
+        (result) =>
+          result.success === true
+      );
+
+    const failed =
+      results.filter(
+        (result) =>
+          result.success !== true
+      );
+
+    const autoPosted =
+      successful.filter(
+        (result) =>
+          result.status ===
+            'REPLIED' &&
+          result.posted === true
+      );
+
+    const alreadyReplied =
+      successful.filter(
+        (result) =>
+          result.status ===
+            'REPLIED' &&
+          result.alreadyReplied ===
+            true
+      );
+
+    const manualApproval =
+      successful.filter(
+        (result) =>
+          result.status ===
+          'GENERATED'
+      );
+
+    const errors =
+      failed.map(
+        (result) => ({
+          id: result.id,
+          error: result.error,
+        })
+      );
+
+    /*
+    ================================================
+    LOG
+    ================================================
+    */
+
+    console.log(
+      `[Bulk AI] COMPLETE | total=${candidates.length} | generated=${successful.length} | posted=${autoPosted.length} | alreadyReplied=${alreadyReplied.length} | manual=${manualApproval.length} | failed=${failed.length} | ${duration}ms`
+    );
+
+    /*
+    ================================================
+    RESPONSE
+    ================================================
+    */
 
     return NextResponse.json({
       success: true,
-      generated: successful.length,
-      autoPosted: autoPosted.length,
-      manualApproval: manualApproval.length,
-      failed: failed.length,
-      total: candidates.length,
+
+      generated:
+        successful.length,
+
+      autoPosted:
+        autoPosted.length,
+
+      alreadyReplied:
+        alreadyReplied.length,
+
+      manualApproval:
+        manualApproval.length,
+
+      failed:
+        failed.length,
+
+      total:
+        candidates.length,
+
+      concurrency:
+        CONCURRENCY,
+
+      durationMs:
+        duration,
+
       errors,
     });
   } catch (error) {
-    console.error('[Bulk AI] FATAL ERROR:', getErrorMessage(error));
-    return NextResponse.json({ success: false, error: getErrorMessage(error) }, { status: 500 });
+    console.error(
+      '[Bulk AI] FATAL ERROR:',
+      getErrorMessage(error)
+    );
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          getErrorMessage(error),
+      },
+      {
+        status: 500,
+      }
+    );
   } finally {
-    BULK_JOB_STATE.running = false;
-    BULK_JOB_STATE.startedAt = 0;
+    /*
+    Always release lock
+    */
+    BULK_JOB_STATE.running =
+      false;
+
+    BULK_JOB_STATE.startedAt =
+      0;
   }
 }
