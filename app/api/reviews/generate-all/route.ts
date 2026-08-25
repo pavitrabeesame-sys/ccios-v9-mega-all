@@ -3,12 +3,12 @@ import { prisma as db } from '@/lib/prisma';
 import { askGroq } from '@/src/services/ai/GroqService';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300; // Bump from 60 to 300 seconds
+export const maxDuration = 300;
 
 /*
 ============================================================
 CCIOS — MASTER REVIEW AI GENERATION ENGINE
-2026 PRODUCTION HARDENED
+2026 PRODUCTION HARDENED & BRAND-MAPPED
 ============================================================
 */
 
@@ -94,9 +94,17 @@ function blockGeminiQuota(): void {
 
 /*
 ============================================================
-BRAND REGISTRY
+BRAND REGISTRY & SHOP ID MAPPING
 ============================================================
 */
+
+const SHOP_ID_TO_BRAND_MAP: Record<string, string> = {
+  "66854646": "Nicole Collection",
+  "282544493": "Hush Puppies Accessories",
+  "469553987": "RAV Design", // Update based on your actual store mappings
+  "1788012053": "Nicole Collection",
+  // Map any other Store_XXXXX IDs from your Prisma Studio view here
+};
 
 const BRAND_ALIASES = [
   {
@@ -132,8 +140,16 @@ const BRAND_ALIASES = [
 ];
 
 function normalizeBrand(rawBrand: unknown): string {
-  if (!rawBrand) return 'Our Store';
-  const cleaned = String(rawBrand)
+  if (!rawBrand) return 'Nicole Collection';
+
+  const rawStr = String(rawBrand).trim();
+
+  // 1. Intercept numeric Shop IDs and map them to clean canonical brand names
+  if (SHOP_ID_TO_BRAND_MAP[rawStr]) {
+    return SHOP_ID_TO_BRAND_MAP[rawStr];
+  }
+
+  const cleaned = rawStr
     .replace(/\(.*?\)/g, '')
     .replace(/official\s*store/gi, '')
     .replace(/boutique/gi, '')
@@ -152,7 +168,12 @@ function normalizeBrand(rawBrand: unknown): string {
     }
   }
 
-  return String(rawBrand).replace(/\(.*?\)/g, '').trim() || 'Our Store';
+  // 2. Fallback if it's purely a number sequence but not in our dictionary map
+  if (/^\d+$/.test(rawStr)) {
+    return 'Nicole Collection';
+  }
+
+  return rawStr.replace(/\(.*?\)/g, '').trim() || 'Nicole Collection';
 }
 
 function getBrandVoice(brandName: string): string {
@@ -348,7 +369,6 @@ function validateReply(reply: unknown, review: any) {
 
   const specificity = validateReviewSpecificity(cleaned, String(review?.reviewText || ''));
 
-  // Brand check and automatic injection if missing
   const keywords = getBrandKeywords(brandName);
   const hasBrand = keywords.some((kw) => cleaned.toLowerCase().includes(kw));
 
@@ -484,7 +504,6 @@ async function generateWithAI(review: any, profileCache: Map<string, any>): Prom
       return validation.cleanedReply;
     }
 
-    // Single retry pass with correction prompt
     const retryPrompt = buildPrompt(review, aiProfile, { isRetry: true, retryReason: validation.reason });
     const retryReply = await askGroq(retryPrompt);
     const retryValidation = validateReply(retryReply, review);
@@ -551,7 +570,6 @@ async function autoPostReply(review: any, reply: string) {
     throw new Error(`Shopee endpoint failed (${response.status}): ${typeof data === 'string' ? data : JSON.stringify(data)}`);
   }
 
-  // Check for Shopee batch / api level errors including duplicate requests
   if (data && typeof data === 'object') {
     const errorString = JSON.stringify(data).toLowerCase();
     if (errorString.includes('duplicate_request') || errorString.includes('already replied')) {
@@ -604,7 +622,6 @@ async function processReview(review: any, profileCache: Map<string, any>) {
       } catch (postError) {
         const errStr = getErrorMessage(postError).toLowerCase();
         
-        // IDEMPOTENT DUPLICATE HANDLING: Treat Shopee duplicate as success
         if (errStr.includes('duplicate_request') || errStr.includes('already replied') || errStr.includes('duplicate')) {
           await db.review.update({
             where: { id: review.id },
@@ -613,7 +630,6 @@ async function processReview(review: any, profileCache: Map<string, any>) {
           return { success: true, id: review.id, status: 'REPLIED', alreadyReplied: true, reply: finalReply };
         }
 
-        // Otherwise keep as GENERATED for manual review
         await db.review.update({
           where: { id: review.id },
           data: { aiReply: finalReply, status: 'GENERATED' },
@@ -623,7 +639,6 @@ async function processReview(review: any, profileCache: Map<string, any>) {
       }
     }
 
-    // 1-3 star manual approval status
     await db.review.update({
       where: { id: review.id },
       data: { aiReply: finalReply, status: 'GENERATED' },
