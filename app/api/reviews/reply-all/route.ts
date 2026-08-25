@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { getValidAccessToken } from '@/src/services/shopee/ShopService';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 300; // Bump from 60 to 300 seconds
 
 /**
  * ============================================================

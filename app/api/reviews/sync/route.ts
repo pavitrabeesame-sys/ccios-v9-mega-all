@@ -3,7 +3,7 @@ import { prisma as db } from '@/lib/prisma';
 import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 300; // Bump from 60 to 300 seconds
 
 /*
 ============================================================
