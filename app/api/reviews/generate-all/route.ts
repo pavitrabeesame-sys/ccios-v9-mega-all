@@ -13,19 +13,6 @@ FAST PARALLEL + BRAND MAPPED + SHOPEE AUTO REPLY
 ============================================================
 */
 
-/*
-============================================================
-PERFORMANCE SETTINGS
-============================================================
-
-1 = safest / slowest
-3 = conservative
-5 = recommended
-8 = aggressive
-
-You can override with:
-CCIOS_AI_CONCURRENCY=5
-*/
 const CONCURRENCY = Math.max(
   1,
   Math.min(
@@ -151,6 +138,10 @@ const SHOP_ID_TO_BRAND_MAP: Record<string, string> = {
   '282544493': 'Hush Puppies Accessories',
   '469553987': 'RAV Design',
   '1788012053': 'Nicole Collection',
+  '115383763': 'Obermain',
+  '170808053': 'Beverly Hills Polo Club',
+  '190669704': 'Beverly Hills Polo Club',
+  '170811257': 'JOHN LANGFORD OF LONDON',
 };
 
 const BRAND_ALIASES = [
@@ -211,9 +202,6 @@ function normalizeBrand(rawBrand: unknown): string {
 
   const rawStr = String(rawBrand).trim();
 
-  /*
-  Numeric Shopee Store ID
-  */
   if (SHOP_ID_TO_BRAND_MAP[rawStr]) {
     return SHOP_ID_TO_BRAND_MAP[rawStr];
   }
@@ -238,9 +226,6 @@ function normalizeBrand(rawBrand: unknown): string {
     }
   }
 
-  /*
-  Unknown numeric Store ID
-  */
   if (/^\d+$/.test(rawStr)) {
     return 'Nicole Collection';
   }
@@ -294,48 +279,16 @@ function detectLanguage(text: string): string {
     return 'English';
   }
 
-  /*
-  Chinese
-  */
   if (/[\u3400-\u9fff]/.test(value)) {
     return 'Simplified Chinese';
   }
 
   const malayWords = [
-    'sangat',
-    'cantik',
-    'bagus',
-    'terima',
-    'kasih',
-    'kualiti',
-    'barang',
-    'penghantaran',
-    'cepat',
-    'lambat',
-    'sesuai',
-    'puas',
-    'harga',
-    'boleh',
-    'kain',
-    'baju',
-    'kemas',
-    'murah',
-    'berbaloi',
-    'selesa',
-    'saiz',
-    'kecil',
-    'besar',
-    'servis',
-    'seller',
-    'penjual',
-    'sampai',
-    'parcel',
-    'bungkusan',
-    'yang',
-    'dan',
-    'untuk',
-    'dengan',
-    'baik',
+    'sangat', 'cantik', 'bagus', 'terima', 'kasih', 'kualiti', 'barang',
+    'penghantaran', 'cepat', 'lambat', 'sesuai', 'puas', 'harga', 'boleh',
+    'kain', 'baju', 'kemas', 'murah', 'berbaloi', 'selesa', 'saiz', 'kecil',
+    'besar', 'servis', 'seller', 'penjual', 'sampai', 'parcel', 'bungkusan',
+    'yang', 'dan', 'untuk', 'dengan', 'baik',
   ];
 
   const lower = value.toLowerCase();
@@ -372,9 +325,6 @@ function filterRelevantKnowledge(
     return String(knowledgeBase);
   }
 
-  /*
-  Keep prompt small for faster AI generation.
-  */
   return sections.slice(0, 3).join('\n===\n');
 }
 
@@ -385,96 +335,15 @@ REVIEW TOPICS
 */
 
 const REVIEW_TOPICS = {
-  quality: [
-    'quality',
-    'kualiti',
-    'bagus',
-    'good',
-    'great',
-    'excellent',
-    'nice',
-    'berkualiti',
-    'baik',
-    'ok',
-  ],
-
-  fabric: [
-    'fabric',
-    'kain',
-    'material',
-    'bahan',
-    'cotton',
-    'leather',
-    'kulit',
-  ],
-
-  design: [
-    'design',
-    'rekaan',
-    'style',
-    'stylish',
-    'cantik',
-    'kemas',
-    'elegant',
-  ],
-
-  fit: [
-    'fit',
-    'size',
-    'sizing',
-    'saiz',
-    'kecil',
-    'besar',
-    'tight',
-    'loose',
-    'ketat',
-  ],
-
-  service: [
-    'service',
-    'servis',
-    'seller',
-    'penjual',
-    'staff',
-    'response',
-  ],
-
-  delivery: [
-    'delivery',
-    'penghantaran',
-    'shipping',
-    'ship',
-    'sampai',
-    'courier',
-    'cepat',
-    'lambat',
-  ],
-
-  price: [
-    'price',
-    'harga',
-    'murah',
-    'berbaloi',
-    'value',
-    'affordable',
-  ],
-
-  packaging: [
-    'packaging',
-    'pembungkusan',
-    'package',
-    'bungkusan',
-    'kemas',
-  ],
-
-  comfort: [
-    'comfort',
-    'comfortable',
-    'selesa',
-    'ringan',
-    'soft',
-    'lembut',
-  ],
+  quality: ['quality', 'kualiti', 'bagus', 'good', 'great', 'excellent', 'nice', 'berkualiti', 'baik', 'ok'],
+  fabric: ['fabric', 'kain', 'material', 'bahan', 'cotton', 'leather', 'kulit'],
+  design: ['design', 'rekaan', 'style', 'stylish', 'cantik', 'kemas', 'elegant'],
+  fit: ['fit', 'size', 'sizing', 'saiz', 'kecil', 'besar', 'tight', 'loose', 'ketat'],
+  service: ['service', 'servis', 'seller', 'penjual', 'staff', 'response'],
+  delivery: ['delivery', 'penghantaran', 'shipping', 'ship', 'sampai', 'courier', 'cepat', 'lambat'],
+  price: ['price', 'harga', 'murah', 'berbaloi', 'value', 'affordable'],
+  packaging: ['packaging', 'pembungkusan', 'package', 'bungkusan', 'kemas'],
+  comfort: ['comfort', 'comfortable', 'selesa', 'ringan', 'soft', 'lembut'],
 } as const;
 
 type ReviewTopic = keyof typeof REVIEW_TOPICS;
@@ -483,7 +352,6 @@ function detectReviewTopics(
   reviewText: string
 ): ReviewTopic[] {
   const review = String(reviewText || '').toLowerCase();
-
   const topics: ReviewTopic[] = [];
 
   for (
@@ -677,9 +545,6 @@ function validateReply(
     };
   }
 
-  /*
-  Guarantee emoji
-  */
   if (!containsEmoji(cleaned)) {
     cleaned += ' 😊';
   }
@@ -691,9 +556,6 @@ function validateReply(
     };
   }
 
-  /*
-  Guarantee punctuation
-  */
   if (!/[.!?。！？]$/.test(cleaned)) {
     cleaned += '.';
   }
@@ -711,9 +573,6 @@ function validateReply(
       String(review?.reviewText || '')
     );
 
-  /*
-  Guarantee brand mention
-  */
   const keywords =
     getBrandKeywords(brandName);
 
@@ -773,9 +632,6 @@ async function loadBrandProfile(
       .trim()
       .toUpperCase();
 
-  /*
-  Instant cache hit
-  */
   if (cache.has(cacheKey)) {
     return cache.get(cacheKey);
   }
@@ -878,9 +734,6 @@ function buildPrompt(
   const brandVoice =
     getBrandVoice(brandName);
 
-  /*
-  No written comment
-  */
   if (!reviewText) {
     return `
 You are the official customer service representative for ${brandName}.
@@ -990,10 +843,6 @@ async function callGroqWithRetry(
   prompt: string
 ): Promise<string> {
   try {
-    /*
-    If the primary AI provider is known to be blocked,
-    still allow Groq to handle the request.
-    */
     const result =
       await askGroq(prompt);
 
@@ -1003,14 +852,8 @@ async function callGroqWithRetry(
       blockGeminiQuota();
     }
 
-    /*
-    Small retry delay.
-    */
     await sleep(AI_RETRY_DELAY_MS);
 
-    /*
-    One controlled retry.
-    */
     try {
       const retryResult =
         await askGroq(prompt);
@@ -1039,10 +882,6 @@ async function generateWithAI(
         review?.storeName
     );
 
-  /*
-  No comment = no AI call.
-  This saves API tokens and time.
-  */
   if (!reviewText) {
     return getNoCommentTemplate(
       brandName,
@@ -1078,9 +917,6 @@ async function generateWithAI(
       return validation.cleanedReply;
     }
 
-    /*
-    Validation retry
-    */
     const retryPrompt =
       buildPrompt(
         review,
@@ -1186,13 +1022,9 @@ async function autoPostReply(
     );
   }
 
-  /*
-  FIXED:
-  Do NOT put Markdown inside the URL fallback.
-  */
   const appUrl =
     process.env.NEXT_PUBLIC_APP_URL ||
-    'https://ccios-v9-mega-all.vercel.app';
+    '[https://ccios-v9-mega-all.vercel.app](https://ccios-v9-mega-all.vercel.app)';
 
   const endpoint =
     `${appUrl.replace(/\/$/, '')}/api/shopee/reply-comment`;
@@ -1286,9 +1118,6 @@ async function processReview(
   review: any,
   profileCache: Map<string, any>
 ) {
-  /*
-  Safety check
-  */
   if (
     review?.status === 'REPLIED'
   ) {
@@ -1301,18 +1130,12 @@ async function processReview(
   }
 
   try {
-    /*
-    Generate AI reply
-    */
     const reply =
       await generateWithAI(
         review,
         profileCache
       );
 
-    /*
-    Final validation
-    */
     const validation =
       validateReply(
         reply,
@@ -1335,11 +1158,6 @@ async function processReview(
     const rating =
       Number(review?.rating) || 5;
 
-    /*
-    ================================================
-    4-5 STAR = AUTO POST
-    ================================================
-    */
     if (rating >= 4) {
       try {
         const postResult =
@@ -1348,9 +1166,6 @@ async function processReview(
             finalReply
           );
 
-        /*
-        DB update after successful Shopee post
-        */
         await db.review.update({
           where: {
             id: review.id,
@@ -1378,10 +1193,6 @@ async function processReview(
             postError
           ).toLowerCase();
 
-        /*
-        Shopee already replied.
-        Sync local DB.
-        */
         if (
           errStr.includes(
             'duplicate_request'
@@ -1419,10 +1230,6 @@ async function processReview(
           };
         }
 
-        /*
-        AI generated but Shopee posting failed.
-        Keep for manual retry.
-        */
         await db.review.update({
           where: {
             id: review.id,
@@ -1448,11 +1255,6 @@ async function processReview(
       }
     }
 
-    /*
-    ================================================
-    1-3 STAR = GENERATE ONLY
-    ================================================
-    */
     await db.review.update({
       where: {
         id: review.id,
@@ -1484,15 +1286,6 @@ async function processReview(
 /*
 ============================================================
 FAST PARALLEL BATCH PROCESSOR
-============================================================
-
-Old:
-1 review -> wait -> next review
-
-New:
-5 reviews -> process together
-then next 5
-then next 5...
 ============================================================
 */
 
@@ -1547,9 +1340,6 @@ POST HANDLER
 export async function POST(
   req: Request
 ) {
-  /*
-  Prevent duplicate bulk jobs
-  */
   if (
     BULK_JOB_STATE.running
   ) {
@@ -1574,12 +1364,6 @@ export async function POST(
     Date.now();
 
   try {
-    /*
-    ================================================
-    REQUEST BODY
-    ================================================
-    */
-
     let body: any = {};
 
     try {
@@ -1613,12 +1397,6 @@ export async function POST(
         .toUpperCase() ===
         'ALL';
 
-    /*
-    ================================================
-    DATE FILTER
-    ================================================
-    */
-
     const baseDateFilter = {
       createdAt: {
         gte: START_2026,
@@ -1627,12 +1405,6 @@ export async function POST(
     };
 
     let candidates: any[] = [];
-
-    /*
-    ================================================
-    EXPLICIT IDS
-    ================================================
-    */
 
     if (hasExplicitIds) {
       const uniqueIds = [
@@ -1679,12 +1451,6 @@ export async function POST(
             uniqueIds.length,
         });
     } else {
-      /*
-      ================================================
-      ALL REVIEWS / BRAND FILTER
-      ================================================
-      */
-
       const whereClause: any = {
         status: {
           notIn: [
@@ -1697,23 +1463,32 @@ export async function POST(
       };
 
       if (!isAllBrands) {
+        const upperBrand = String(selectedBrand).trim().toUpperCase();
+        
+        let exactBrandMatch = selectedBrand;
+        if (upperBrand.includes('NICOLE')) exactBrandMatch = 'Nicole Collection';
+        else if (upperBrand.includes('RAV')) exactBrandMatch = 'RAV Design';
+        else if (upperBrand.includes('HUSH')) exactBrandMatch = 'Hush Puppies Accessories';
+        else if (upperBrand.includes('OBERMAIN')) exactBrandMatch = 'Obermain';
+        else if (upperBrand.includes('BHPC') || upperBrand.includes('BEVERLY')) exactBrandMatch = 'Beverly Hills Polo Club';
+        else if (upperBrand.includes('LANGFORD')) exactBrandMatch = 'JOHN LANGFORD OF LONDON';
+
         whereClause.OR = [
           {
             brand: {
-              contains:
-                String(
-                  selectedBrand
-                ),
+              equals: exactBrandMatch,
               mode: 'insensitive',
             },
           },
-
+          {
+            brand: {
+              contains: String(selectedBrand),
+              mode: 'insensitive',
+            },
+          },
           {
             storeName: {
-              contains:
-                String(
-                  selectedBrand
-                ),
+              contains: String(selectedBrand),
               mode: 'insensitive',
             },
           },
@@ -1737,12 +1512,6 @@ export async function POST(
         });
     }
 
-    /*
-    ================================================
-    NOTHING TO PROCESS
-    ================================================
-    */
-
     if (!candidates.length) {
       return NextResponse.json({
         success: true,
@@ -1755,20 +1524,8 @@ export async function POST(
       });
     }
 
-    /*
-    ================================================
-    PROFILE CACHE
-    ================================================
-    */
-
     const profileCache =
       new Map<string, any>();
-
-    /*
-    ================================================
-    PROCESS IN PARALLEL
-    ================================================
-    */
 
     const startedAt =
       Date.now();
@@ -1781,12 +1538,6 @@ export async function POST(
 
     const duration =
       Date.now() - startedAt;
-
-    /*
-    ================================================
-    RESULT COUNTS
-    ================================================
-    */
 
     const successful =
       results.filter(
@@ -1832,21 +1583,9 @@ export async function POST(
         })
       );
 
-    /*
-    ================================================
-    LOG
-    ================================================
-    */
-
     console.log(
       `[Bulk AI] COMPLETE | total=${candidates.length} | generated=${successful.length} | posted=${autoPosted.length} | alreadyReplied=${alreadyReplied.length} | manual=${manualApproval.length} | failed=${failed.length} | ${duration}ms`
     );
-
-    /*
-    ================================================
-    RESPONSE
-    ================================================
-    */
 
     return NextResponse.json({
       success: true,
@@ -1894,9 +1633,6 @@ export async function POST(
       }
     );
   } finally {
-    /*
-    Always release lock
-    */
     BULK_JOB_STATE.running =
       false;
 
