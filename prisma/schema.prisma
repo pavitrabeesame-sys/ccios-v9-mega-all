@@ -30,18 +30,18 @@ model User {
 }
 
 model ShopeeAccount {
-  id              String   @id @default(cuid())
-  shopId          BigInt   @unique
-  accessToken     String
-  refreshToken    String
-  expireIn        Int
-  updatedAt       DateTime @updatedAt
-  createdAt       DateTime @default(now())
-  brandId         String?
-  reviewCursor    String?
-  nextReviewPage  Int      @default(1)
-  reviewSyncDone  Boolean  @default(false)
-  brand            Brand?   @relation(fields: [brandId], references: [id])
+  id             String   @id @default(cuid())
+  shopId         BigInt   @unique
+  accessToken    String
+  refreshToken   String
+  expireIn       Int
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+  brandId        String?
+  nextReviewPage Int      @default(1)
+  reviewSyncDone Boolean  @default(false)
+  reviewCursor   String?
+  brand          Brand?   @relation(fields: [brandId], references: [id])
 }
 
 model LazadaAccount {
@@ -120,37 +120,40 @@ model ProductVariation {
 }
 
 model Review {
-  id           String       @id @default(uuid())
-  reviewId     String       @unique
-  marketplace  Marketplace
-  storeName    String
-  orderNumber  String?
-  productName  String?
-  productSku   String?
-  customerName String
-  rating       Int
-  reviewText   String?
-  aiReply      String?
-  finalReply   String?
-  status       ReviewStatus @default(PENDING)
-  repliedAt    DateTime?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  brand        String?
-  category     String?
-  language     String?
-  sentiment    String?
-  approvedBy   String?
-  confidence   Float?
-  emotion      String?
-  imageUrls    String[]
-  keywords     String[]
-  repliedBy    String?
-  syncTime     DateTime?
-  videoUrls    String[]
-  modelName    String?
-  productImage String?
-  shopId       BigInt?
+  id              String       @id @default(uuid())
+  reviewId        String       @unique
+  marketplace     Marketplace
+  storeName       String
+  orderNumber     String?
+  productName     String?
+  productSku      String?
+  customerName    String
+  rating          Int
+  reviewText      String?
+  aiReply         String?
+  finalReply      String?
+  status          ReviewStatus @default(PENDING)
+  repliedAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  brand           String?
+  category        String?
+  language        String?
+  sentiment       String?
+  approvedBy      String?
+  confidence      Float?
+  emotion         String?
+  imageUrls       String[]
+  keywords        String[]
+  repliedBy       String?
+  syncTime        DateTime?
+  videoUrls       String[]
+  modelName       String?
+  productImage    String?
+  shopId          BigInt?
+  aiAttempts      Int          @default(0)
+  aiLastError     String?
+  aiLastAttemptAt DateTime?
 }
 
 model Company {

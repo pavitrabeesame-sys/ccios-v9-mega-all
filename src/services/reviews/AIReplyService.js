@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { replyShopeeReview } from "../shopee/ReviewService";
+import { getValidAccessToken } from "../shopee/ShopService";
 import Groq from "groq-sdk";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -20,22 +21,47 @@ function getBrandVoice(brand) {
 }
 
 export async function generateAIReply(comment, brand = "BEE_SAME") {
-  if (!comment) return "Thank you dear for your feedback!";
+  if (!comment) {
+    return "Thank you dear for your feedback!";
+  }
 
   const voice = getBrandVoice(brand);
+
   const prompt = `You are customer service for ${brand}. ${voice}
-  Reply to this customer review in 2 sentences max. Be grateful and solve problem if negative: "${comment}"`;
+Reply to this customer review in 2 sentences max. Be grateful and solve problem if negative: "${comment}"`;
 
   try {
     const chat = await groq.chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: "llama-3.1-8b-instant",
+      messages: [
+        {
+          role: "system",
+          content:
+            "Return ONLY the final customer reply. Never explain your reasoning.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+
+      model:
+        process.env.GROQ_MODEL ||
+        "openai/gpt-oss-20b",
+
       temperature: 0.7,
-      max_tokens: 150,
+      max_completion_tokens: 300,
     });
-    return chat.choices[0]?.message?.content?.trim() || "Thank you for your review!";
+
+    return (
+      chat.choices?.[0]?.message?.content?.trim() ||
+      "Thank you for your review!"
+    );
   } catch (error) {
-    console.error("[AIReply] Groq error:", error.message);
+    console.error(
+      "[AIReply] Groq error:",
+      error?.message || error
+    );
+
     return "Thank you dear for your feedback! We appreciate you.";
   }
 }
@@ -70,11 +96,30 @@ export async function processPendingReplies() {
       let postStatus = "GENERATED";
 
       const shop = review.store?.shopeeShop;
-      if(shop?.accessToken && shop?.shopId) {
-        const result = await replyShopeeReview(shop, review.reviewId, aiReply);
-        postStatus = result.success? "APPROVED" : "GENERATED";
-        if(postStatus === "APPROVED") stats.posted++;
-      }
+
+if (shop?.shopId) {
+  const accessToken =
+    await getValidAccessToken(shop.shopId);
+
+  const result =
+    await replyShopeeReview(
+      {
+        ...shop,
+        accessToken,
+      },
+      review.reviewId,
+      aiReply
+    );
+
+  postStatus =
+    result.success
+      ? "APPROVED"
+      : "GENERATED";
+
+  if (postStatus === "APPROVED") {
+    stats.posted++;
+  }
+}
 
       await prisma.review.update({
         where: { id: review.id },

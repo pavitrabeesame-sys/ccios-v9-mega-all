@@ -1,52 +1,71 @@
+// src/services/ai/GroqService.js
+
 const GEMINI_API_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
 
 const GROQ_API_URL =
   "https://api.groq.com/openai/v1/chat/completions";
 
+const META_API_URL =
+  "https://api.llama.com/v1/chat/completions";
+
 const OLLAMA_API_URL =
   process.env.OLLAMA_API_URL ||
   "http://127.0.0.1:11434/api/chat";
 
-/*
-|--------------------------------------------------------------------------
-| MODELS
-|--------------------------------------------------------------------------
-| We use String().trim().replace() to forcefully strip hidden 
-| Windows carriage returns (\r) or quotes from .env variables.
-*/
+// ============================================================
+// MODELS
+// ============================================================
 
 const GEMINI_MODEL =
-  String(process.env.GEMINI_MODEL || "gemini-2.5-flash-lite").trim().replace(/['"]/g, "");
+  String(
+    process.env.GEMINI_MODEL ||
+      "gemini-2.5-flash-lite"
+  )
+    .trim()
+    .replace(/['"]/g, "");
 
 const GROQ_MODEL =
-  String(process.env.GROQ_MODEL || "llama-3.3-70b-versatile").trim().replace(/['"]/g, "");
+  String(
+    process.env.GROQ_MODEL ||
+      "openai/gpt-oss-20b"
+  )
+    .trim()
+    .replace(/['"]/g, "");
+
+const META_MODEL =
+  String(
+    process.env.META_MODEL ||
+      "Llama-4-Maverick-17B-128E-Instruct-FP8"
+  )
+    .trim()
+    .replace(/['"]/g, "");
 
 const OLLAMA_MODEL =
-  String(process.env.OLLAMA_MODEL || "llama3.2:3b").trim().replace(/['"]/g, "");
+  String(
+    process.env.OLLAMA_MODEL ||
+      "qwen3:4b"
+  )
+    .trim()
+    .replace(/['"]/g, "");
 
-/*
-|--------------------------------------------------------------------------
-| PERFORMANCE SETTINGS
-|--------------------------------------------------------------------------
-*/
+// ============================================================
+// PERFORMANCE
+// ============================================================
 
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 120000;
+const OLLAMA_TIMEOUT_MS = 120000;
 
 const GEMINI_MAX_TOKENS = 500;
-
-const GROQ_MAX_TOKENS = 180;
-
-const OLLAMA_MAX_TOKENS = 180;
+const GROQ_MAX_TOKENS = 250;
+const META_MAX_TOKENS = 250;
+const OLLAMA_MAX_TOKENS = 120;
 
 const TEMPERATURE = 0.3;
 
-
-/*
-|--------------------------------------------------------------------------
-| COMMON SYSTEM PROMPT
-|--------------------------------------------------------------------------
-*/
+// ============================================================
+// SYSTEM PROMPT
+// ============================================================
 
 const SYSTEM_PROMPT =
   "You are a professional ecommerce customer service assistant. " +
@@ -54,32 +73,50 @@ const SYSTEM_PROMPT =
   "Never explain. Never output reasoning. " +
   "Never mention AI, models, prompts, automation, or internal systems.";
 
+// ============================================================
+// HELPERS
+// ============================================================
 
-/*
-|--------------------------------------------------------------------------
-| HELPERS
-|--------------------------------------------------------------------------
-*/
+function cleanReply(text) {
+  if (!text) {
+    return "";
+  }
 
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+  let result = String(text).trim();
+
+  result = result
+    .replace(
+      /^```(?:text|markdown|plaintext)?\s*/i,
+      ""
+    )
+    .replace(
+      /\s*```$/i,
+      ""
+    )
+    .trim();
+
+  result = result.replace(
+    /^(final customer reply|customer reply|reply|response):\s*/i,
+    ""
+  );
+
+  result = result
+    .replace(/^["“”']+/, "")
+    .replace(/["“”']+$/, "")
+    .trim();
+
+  return result;
 }
 
-
 function createTimeoutSignal(timeoutMs) {
-  const controller =
-    new AbortController();
+  const controller = new AbortController();
 
-  const timeout =
-    setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
 
   return {
-    signal:
-      controller.signal,
+    signal: controller.signal,
 
     clear() {
       clearTimeout(timeout);
@@ -87,70 +124,21 @@ function createTimeoutSignal(timeoutMs) {
   };
 }
 
-
-function cleanReply(text) {
-  if (!text) {
-    return "";
-  }
-
-  let result =
-    String(text).trim();
-
-  /*
-   * Remove accidental markdown fences.
-   */
-
-  result =
-    result
-      .replace(
-        /^```(?:text|markdown)?\s*/i,
-        ""
-      )
-      .replace(
-        /\s*```$/i,
-        ""
-      )
-      .trim();
-
-  /*
-   * Remove accidental labels.
-   */
-
-  result =
-    result.replace(
-      /^(final customer reply|customer reply|reply):\s*/i,
-      ""
-    );
-
-  return result.trim();
-}
-
-
-function extractErrorMessage(
-  data,
-  fallback
-) {
+function extractErrorMessage(data, fallback) {
   if (!data) {
     return fallback;
   }
 
-  if (
-    typeof data === "string"
-  ) {
+  if (typeof data === "string") {
     return data;
   }
 
   if (data.error) {
-    if (
-      typeof data.error ===
-      "string"
-    ) {
+    if (typeof data.error === "string") {
       return data.error;
     }
 
-    if (
-      data.error.message
-    ) {
+    if (data.error.message) {
       return data.error.message;
     }
   }
@@ -162,39 +150,17 @@ function extractErrorMessage(
   return fallback;
 }
 
+// ============================================================
+// GEMINI
+// ============================================================
 
-function isRateLimitError(
-  status,
-  text
-) {
-  const value =
-    String(text || "")
-      .toLowerCase();
-
-  return (
-    status === 429 ||
-    value.includes("rate limit") ||
-    value.includes("rate_limit") ||
-    value.includes("resource exhausted") ||
-    value.includes("quota") ||
-    value.includes("too many requests") ||
-    value.includes("tokens per day") ||
-    value.includes("tokens per minute")
-  );
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| GEMINI
-|--------------------------------------------------------------------------
-*/
-
-async function askGemini(
-  prompt
-) {
+async function askGemini(prompt) {
   const apiKey =
-    String(process.env.GEMINI_API_KEY || "").trim().replace(/['"]/g, "");
+    String(
+      process.env.GEMINI_API_KEY || ""
+    )
+      .trim()
+      .replace(/['"]/g, "");
 
   if (!apiKey) {
     throw new Error(
@@ -202,8 +168,9 @@ async function askGemini(
     );
   }
 
-  // FIXED: No template literals here. Pure string addition to avoid markdown bugs.
-  const url = GEMINI_API_URL + "/" + GEMINI_MODEL + ":generateContent?key=" + encodeURIComponent(apiKey);
+  const url =
+    `${GEMINI_API_URL}/${GEMINI_MODEL}` +
+    `:generateContent?key=${encodeURIComponent(apiKey)}`;
 
   const timeout =
     createTimeoutSignal(
@@ -212,57 +179,50 @@ async function askGemini(
 
   try {
     const response =
-      await fetch(
-        url,
-        {
-          method: "POST",
+      await fetch(url, {
+        method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json",
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text: SYSTEM_PROMPT,
+              },
+            ],
           },
 
-          body:
-            JSON.stringify({
-              systemInstruction: {
-                parts: [
-                  {
-                    text:
-                      SYSTEM_PROMPT,
-                  },
-                ],
-              },
+          contents: [
+            {
+              role: "user",
 
-              contents: [
+              parts: [
                 {
-                  role: "user",
-
-                  parts: [
-                    {
-                      text:
-                        prompt,
-                    },
-                  ],
+                  text: prompt,
                 },
               ],
+            },
+          ],
 
-              generationConfig: {
-                temperature:
-                  TEMPERATURE,
+          generationConfig: {
+            temperature:
+              TEMPERATURE,
 
-                maxOutputTokens:
-                  GEMINI_MAX_TOKENS,
+            maxOutputTokens:
+              GEMINI_MAX_TOKENS,
 
-                thinkingConfig: {
-                  thinkingBudget: 0,
-                },
-              },
-            }),
+            thinkingConfig: {
+              thinkingBudget: 0,
+            },
+          },
+        }),
 
-          signal:
-            timeout.signal,
-        }
-      );
+        signal: timeout.signal,
+      });
 
     const rawText =
       await response.text();
@@ -270,40 +230,23 @@ async function askGemini(
     let data;
 
     try {
-      data =
-        JSON.parse(rawText);
+      data = JSON.parse(rawText);
     } catch {
-      data =
-        rawText;
+      data = rawText;
     }
 
     if (!response.ok) {
-      const message =
+      throw new Error(
         extractErrorMessage(
           data,
           `Gemini API error (${response.status})`
-        );
-
-      const error =
-        new Error(message);
-
-      error.status =
-        response.status;
-
-      error.isRateLimit =
-        isRateLimitError(
-          response.status,
-          message
-        );
-
-      throw error;
+        )
+      );
     }
 
     const parts =
-      data
-        ?.candidates?.[0]
-        ?.content
-        ?.parts || [];
+      data?.candidates?.[0]
+        ?.content?.parts || [];
 
     const text =
       parts
@@ -326,18 +269,17 @@ async function askGemini(
   }
 }
 
+// ============================================================
+// GROQ
+// ============================================================
 
-/*
-|--------------------------------------------------------------------------
-| GROQ
-|--------------------------------------------------------------------------
-*/
-
-async function askGroqFallback(
-  prompt
-) {
+async function askGroqFallback(prompt) {
   const apiKey =
-    String(process.env.GROQ_API_KEY || "").trim().replace(/['"]/g, "");
+    String(
+      process.env.GROQ_API_KEY || ""
+    )
+      .trim()
+      .replace(/['"]/g, "");
 
   if (!apiKey) {
     throw new Error(
@@ -365,35 +307,35 @@ async function askGroqFallback(
               "application/json",
           },
 
-          body:
-            JSON.stringify({
-              model:
-                GROQ_MODEL,
+          body: JSON.stringify({
+            model:
+              GROQ_MODEL,
 
-              temperature:
-                TEMPERATURE,
+            messages: [
+              {
+                role: "system",
 
-              max_tokens:
-                GROQ_MAX_TOKENS,
+                content:
+                  SYSTEM_PROMPT,
+              },
 
-              messages: [
-                {
-                  role:
-                    "system",
+              {
+                role: "user",
 
-                  content:
-                    SYSTEM_PROMPT,
-                },
+                content:
+                  prompt,
+              },
+            ],
 
-                {
-                  role:
-                    "user",
+            reasoning_effort:
+              "low",
 
-                  content:
-                    prompt,
-                },
-              ],
-            }),
+            temperature:
+              TEMPERATURE,
+
+            max_tokens:
+              GROQ_MAX_TOKENS,
+          }),
 
           signal:
             timeout.signal,
@@ -406,40 +348,23 @@ async function askGroqFallback(
     let data;
 
     try {
-      data =
-        JSON.parse(rawText);
+      data = JSON.parse(rawText);
     } catch {
-      data =
-        rawText;
+      data = rawText;
     }
 
     if (!response.ok) {
-      const message =
+      throw new Error(
         extractErrorMessage(
           data,
           `Groq API error (${response.status})`
-        );
-
-      const error =
-        new Error(message);
-
-      error.status =
-        response.status;
-
-      error.isRateLimit =
-        isRateLimitError(
-          response.status,
-          message
-        );
-
-      throw error;
+        )
+      );
     }
 
     const reply =
-      data
-        ?.choices?.[0]
-        ?.message
-        ?.content;
+      data?.choices?.[0]
+        ?.message?.content;
 
     if (
       !reply ||
@@ -456,19 +381,126 @@ async function askGroqFallback(
   }
 }
 
+// ============================================================
+// META LLAMA API
+// ============================================================
 
-/*
-|--------------------------------------------------------------------------
-| OLLAMA
-|--------------------------------------------------------------------------
-*/
+async function askMeta(prompt) {
+  const apiKey =
+    String(
+      process.env.META_LLAMA_API_KEY ||
+        process.env.LLAMA_API_KEY ||
+        process.env.MODEL_API_KEY ||
+        ""
+    )
+      .trim()
+      .replace(/['"]/g, "");
 
-async function askOllama(
-  prompt
-) {
+  if (!apiKey) {
+    throw new Error(
+      "META_LLAMA_API_KEY is not configured."
+    );
+  }
+
   const timeout =
     createTimeoutSignal(
       REQUEST_TIMEOUT_MS
+    );
+
+  try {
+    const response =
+      await fetch(
+        META_API_URL,
+        {
+          method: "POST",
+
+          headers: {
+            Authorization:
+              `Bearer ${apiKey}`,
+
+            "Content-Type":
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            model:
+              META_MODEL,
+
+            messages: [
+              {
+                role: "system",
+
+                content:
+                  SYSTEM_PROMPT,
+              },
+
+              {
+                role: "user",
+
+                content:
+                  prompt,
+              },
+            ],
+
+            temperature:
+              TEMPERATURE,
+
+            max_tokens:
+              META_MAX_TOKENS,
+          }),
+
+          signal:
+            timeout.signal,
+        }
+      );
+
+    const rawText =
+      await response.text();
+
+    let data;
+
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      data = rawText;
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        extractErrorMessage(
+          data,
+          `Meta Llama API error (${response.status})`
+        )
+      );
+    }
+
+    const reply =
+      data?.choices?.[0]
+        ?.message?.content;
+
+    if (
+      !reply ||
+      !String(reply).trim()
+    ) {
+      throw new Error(
+        "Meta Llama returned an empty response."
+      );
+    }
+
+    return cleanReply(reply);
+  } finally {
+    timeout.clear();
+  }
+}
+
+// ============================================================
+// OLLAMA
+// ============================================================
+
+async function askOllama(prompt) {
+  const timeout =
+    createTimeoutSignal(
+      OLLAMA_TIMEOUT_MS
     );
 
   try {
@@ -483,40 +515,40 @@ async function askOllama(
               "application/json",
           },
 
-          body:
-            JSON.stringify({
-              model:
-                OLLAMA_MODEL,
+          body: JSON.stringify({
+            model:
+              OLLAMA_MODEL,
 
-              stream:
-                false,
+            stream:
+              false,
 
-              messages: [
-                {
-                  role:
-                    "system",
+            think:
+              false,
 
-                  content:
-                    SYSTEM_PROMPT,
-                },
+            messages: [
+              {
+                role: "system",
 
-                {
-                  role:
-                    "user",
-
-                  content:
-                    prompt,
-                },
-              ],
-
-              options: {
-                temperature:
-                  TEMPERATURE,
-
-                num_predict:
-                  OLLAMA_MAX_TOKENS,
+                content:
+                  SYSTEM_PROMPT,
               },
-            }),
+
+              {
+                role: "user",
+
+                content:
+                  prompt,
+              },
+            ],
+
+            options: {
+              temperature:
+                TEMPERATURE,
+
+              num_predict:
+                OLLAMA_MAX_TOKENS,
+            },
+          }),
 
           signal:
             timeout.signal,
@@ -529,29 +561,22 @@ async function askOllama(
     let data;
 
     try {
-      data =
-        JSON.parse(rawText);
+      data = JSON.parse(rawText);
     } catch {
-      data =
-        rawText;
+      data = rawText;
     }
 
     if (!response.ok) {
-      const message =
+      throw new Error(
         extractErrorMessage(
           data,
           `Ollama API error (${response.status})`
-        );
-
-      throw new Error(
-        message
+        )
       );
     }
 
     const reply =
-      data
-        ?.message
-        ?.content;
+      data?.message?.content;
 
     if (
       !reply ||
@@ -568,26 +593,11 @@ async function askOllama(
   }
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| MAIN CCIOS AI GATEWAY
-|--------------------------------------------------------------------------
-|
-| Existing code continues using:
-|
-|   askGroq(prompt)
-|
-| Internally:
-|
-|   Gemini
-|      ↓
-|   Groq 8B
-|      ↓
-|   Ollama
-|
-|--------------------------------------------------------------------------
-*/
+// ============================================================
+// MAIN AI GATEWAY
+//
+// META → GEMINI → GROQ → OLLAMA
+// ============================================================
 
 export async function askGroq(
   prompt,
@@ -597,6 +607,7 @@ export async function askGroq(
     Boolean(
       options?.skipGemini
     );
+
   if (
     !prompt ||
     !String(prompt).trim()
@@ -609,12 +620,38 @@ export async function askGroq(
   const cleanPrompt =
     String(prompt).trim();
 
+  // ==========================================================
+  // 1. META
+  // ==========================================================
 
-  /*
-   |--------------------------------------------------------------------------
-   | 1. GEMINI
-   |--------------------------------------------------------------------------
-   */
+  try {
+    console.log(
+      `[AI] Trying Meta ${META_MODEL}`
+    );
+
+    const reply =
+      await askMeta(
+        cleanPrompt
+      );
+
+    if (reply) {
+      console.log(
+        "[AI] Meta succeeded"
+      );
+
+      return reply;
+    }
+  } catch (error) {
+    console.warn(
+      "[AI] Meta failed:",
+      error?.message ||
+        String(error)
+    );
+  }
+
+  // ==========================================================
+  // 2. GEMINI
+  // ==========================================================
 
   if (!skipGemini) {
     try {
@@ -629,30 +666,27 @@ export async function askGroq(
 
       if (reply) {
         console.log(
-          '[AI] Gemini succeeded'
+          "[AI] Gemini succeeded"
         );
 
         return reply;
       }
     } catch (error) {
       console.warn(
-        '[AI] Gemini failed:',
+        "[AI] Gemini failed:",
         error?.message ||
           String(error)
       );
     }
   } else {
     console.log(
-      '[AI] Gemini skipped — direct Groq fallback requested'
+      "[AI] Gemini skipped"
     );
   }
 
-
-  /*
-   |--------------------------------------------------------------------------
-   | 2. GROQ 
-   |--------------------------------------------------------------------------
-   */
+  // ==========================================================
+  // 3. GROQ
+  // ==========================================================
 
   try {
     console.log(
@@ -666,27 +700,28 @@ export async function askGroq(
 
     if (reply) {
       console.log(
-        `[AI] Groq succeeded`
+        "[AI] Groq succeeded"
       );
 
       return reply;
     }
   } catch (error) {
     console.warn(
-      `[AI] Groq failed:`,
+      "[AI] Groq failed:",
       error?.message ||
         String(error)
     );
   }
 
+  // ==========================================================
+  // 4. OLLAMA
+  // ==========================================================
 
-  /*
-   |--------------------------------------------------------------------------
-   | 3. OLLAMA
-   |--------------------------------------------------------------------------
-   */
-
-  if (process.env.VERCEL !== "1" && process.env.NODE_ENV !== "production") {
+  if (
+    process.env.VERCEL !== "1" &&
+    process.env.NODE_ENV !==
+      "production"
+  ) {
     try {
       console.log(
         `[AI] Trying Ollama ${OLLAMA_MODEL}`
@@ -699,32 +734,36 @@ export async function askGroq(
 
       if (reply) {
         console.log(
-          `[AI] Ollama succeeded`
+          "[AI] Ollama succeeded"
         );
 
         return reply;
       }
     } catch (error) {
       console.warn(
-        `[AI] Ollama unavailable:`,
+        "[AI] Ollama failed:",
         error?.message ||
           String(error)
       );
     }
   } else {
     console.log(
-      '[AI] Ollama skipped — running in production/Vercel environment'
+      "[AI] Ollama skipped — production/Vercel"
     );
   }
 
-
-  /*
-   |--------------------------------------------------------------------------
-   | ALL PROVIDERS FAILED
-   |--------------------------------------------------------------------------
-   */
-
   throw new Error(
-    "All AI providers failed: Gemini, Groq, and Ollama."
+    "All AI providers failed: Meta, Gemini, Groq, and Ollama."
   );
 }
+
+// ============================================================
+// DIRECT PROVIDER EXPORTS
+// ============================================================
+
+export {
+  askGemini,
+  askGroqFallback,
+  askMeta,
+  askOllama,
+};
