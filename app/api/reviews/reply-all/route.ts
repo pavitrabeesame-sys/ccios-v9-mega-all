@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { prisma } from '@/lib/prisma';
-import { getValidAccessToken } from '@/src/services/shopee/ShopService';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // Bump from 60 to 300 seconds
@@ -850,77 +849,64 @@ export async function POST(
        * refresh.
        */
 
-      let accessToken: string;
+let accessToken: string;
 
-      try {
-        const tokenResult =
-          await getValidAccessToken(
-            shopId
-          );
+try {
+  const account =
+    await prisma.shopeeAccount.findUnique({
+      where: {
+        shopId: BigInt(shopId),
+      },
+    });
 
-        /**
-         * Support both:
-         *
-         * string
-         *
-         * and:
-         *
-         * { accessToken }
-         */
+  if (!account) {
+    throw new Error(
+      `No Shopee account found for shop ${shopId}.`
+    );
+  }
 
-        if (
-          typeof tokenResult ===
-          'string'
-        ) {
-          accessToken =
-            tokenResult;
-        } else {
-          accessToken =
-            String(
-              tokenResult?.accessToken ||
-                ''
-            );
-        }
+  if (!account.accessToken) {
+    throw new Error(
+      `Shopee account ${shopId} has no access token.`
+    );
+  }
 
-        if (
-          !accessToken
-        ) {
-          throw new Error(
-            `Unable to obtain a valid Shopee access token for shop ${shopId}.`
-          );
-        }
-      } catch (error) {
-        const message =
-          getErrorMessage(
-            error
-          );
+  accessToken = String(
+    account.accessToken
+  ).trim();
 
-        console.error(
-          `[Shopee Bulk Reply] Token error shop=${shopId}:`,
-          message
-        );
+  if (!accessToken) {
+    throw new Error(
+      `Shopee account ${shopId} has an empty access token.`
+    );
+  }
 
-        for (
-          const review of
-            shopReviews
-        ) {
-          results.push({
-            id:
-              review.id,
+  console.log(
+    `[Shopee Bulk Reply] Token loaded successfully shop=${shopId}`
+  );
+} catch (error) {
+  const message =
+    getErrorMessage(error);
 
-            reviewId:
-              review.reviewId,
+  console.error(
+    `[Shopee Bulk Reply] Token error shop=${shopId}:`,
+    message
+  );
 
-            success:
-              false,
+  for (
+    const review of shopReviews
+  ) {
+    results.push({
+      id: review.id,
+      reviewId: review.reviewId,
+      success: false,
+      error:
+        `Unable to obtain Shopee access token: ${message}`,
+    });
+  }
 
-            error:
-              `Unable to obtain Shopee access token: ${message}`,
-          });
-        }
-
-        continue;
-      }
+  continue;
+}
 
       /**
        * ======================================================
