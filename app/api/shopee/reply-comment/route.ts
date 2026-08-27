@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import {
   replyToShopeeForReview,
   formatShopeeError,
-} from "@/src/services/shopee/ReplyCommentService";
+} from "@/services/shopee/ReplyCommentService";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;

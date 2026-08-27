@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma as db } from '@/lib/prisma';
 import crypto from 'crypto';
-import { getValidToken } from '@/src/services/shopee/TokenService';
-import { validateReply } from '@/src/lib/ai/reply-validator';
+import { getValidToken } from '@/services/shopee/TokenService';
+import { validateReply } from '@/lib/ai/reply-validator';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;

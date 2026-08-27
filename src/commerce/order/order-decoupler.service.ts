@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
-import { SyncOrderDTO } from '@/src/commerce/plugins/core/base-adapter.interface';
+import { SyncOrderDTO } from '@/commerce/plugins/core/base-adapter.interface';
 import { InventoryReservationService } from '../wms/inventory-reservation.service';
 import { EventBus } from '../../core/events/event-bus';
 import { randomUUID } from 'crypto';

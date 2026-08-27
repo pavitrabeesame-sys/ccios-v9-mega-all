@@ -141,14 +141,21 @@ async function runStandaloneSync() {
             const orderNumber = c.order_sn || null;
             const itemSku = String(c.item_id || "");
 
-            const product = await prisma.product.findFirst({
-              where: { OR: [{ sku: itemSku }, { shopeeItemId: BigInt(c.item_id || 0) }] }
-            });
-            const productName = product ? product.name : `Shopee Product ${c.item_id}`;
+            // Extract product name directly from Shopee comment payload first
+            const shopeeItemName = c.item_name || c.product_name || c.name || c.item_brief?.item_name;
+
+            let product = null;
+            if (!shopeeItemName) {
+              product = await prisma.product.findFirst({
+                where: { OR: [{ sku: itemSku }, { shopeeItemId: BigInt(c.item_id || 0) }] }
+              });
+            }
+
+            const productName = shopeeItemName || (product ? product.name : `Shopee Product ${c.item_id}`);
 
             await prisma.review.upsert({
               where: { reviewId },
-              update: { rating, reviewText, updatedAt: new Date() },
+              update: { rating, reviewText, productName, productSku: itemSku, updatedAt: new Date() },
               create: {
                 reviewId,
                 marketplace: 'SHOPEE',

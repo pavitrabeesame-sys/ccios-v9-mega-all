@@ -121,7 +121,7 @@ model ProductVariation {
 
 model Review {
   id              String       @id @default(uuid())
-  reviewId        String       @unique
+  reviewId        String
   marketplace     Marketplace
   storeName       String
   orderNumber     String?
@@ -154,6 +154,8 @@ model Review {
   aiAttempts      Int          @default(0)
   aiLastError     String?
   aiLastAttemptAt DateTime?
+
+  @@unique([marketplace, shopId, reviewId])
 }
 
 model Company {

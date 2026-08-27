@@ -1,25 +1,12 @@
-export const dynamic = 'force-dynamic';
+// app/api/lazada/test/route.js
 
 import { NextResponse } from "next/server";
-import { lazadaGet } from "@/lib/lazada";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
-  try {
-    const result = await lazadaGet(
-      "RAV",
-      "/seller/get"
-    );
-
-    return NextResponse.json({
-      success: true,
-      result
-    });
-
-  } catch (error) {
-    console.error('[Lazada Test Error]:', error);
-    return NextResponse.json({
-      success: false,
-      error: error.message
-    }, { status: 500 });
-  }
+  return NextResponse.json({
+    success: true,
+    message: "Lazada API route is available.",
+  });
 }

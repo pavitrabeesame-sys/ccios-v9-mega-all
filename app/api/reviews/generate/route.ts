@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma as db } from '@/lib/prisma';
-import { askGroq } from '@/src/services/ai/GroqService';
+import { askGroq } from '@/services/ai/GroqService';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // Bump from 60 to 300 seconds

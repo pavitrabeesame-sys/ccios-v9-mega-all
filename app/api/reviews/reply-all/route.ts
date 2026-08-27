@@ -3,14 +3,18 @@ import crypto from 'crypto';
 import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300; // Bump from 60 to 300 seconds
+export const maxDuration = 300;
 
 /**
  * ============================================================
  * CCIOS — SHOPEE BULK REVIEW REPLY
  * ============================================================
  *
- * POST body:
+ * Endpoint:
+ *
+ * POST /api/reviews/reply-all
+ *
+ * Body:
  *
  * {
  *   "ids": [
@@ -19,24 +23,15 @@ export const maxDuration = 300; // Bump from 60 to 300 seconds
  *   ]
  * }
  *
- * Flow:
+ * IMPORTANT SHOPEE LIMIT:
  *
- * 1. Load eligible Shopee reviews
- * 2. Validate AI replies
- * 3. Group reviews by review.shopId
- * 4. Get valid Shopee token for each shop
- * 5. Create Shopee signature
- * 6. Send bulk reply_comment request
- * 7. Validate HTTP response
- * 8. Validate per-comment result
- * 9. Treat duplicate_request as already replied
- * 10. Update Prisma only for confirmed success
+ * reply_comment accepts:
  *
- * IMPORTANT:
+ *     minimum: 1
+ *     maximum: 100
  *
- * - shopId comes directly from Review.shopId
- * - storeName is NEVER used to determine a Shopee shop
- * - Database status is NOT changed before Shopee confirms success
+ * Therefore every shop is automatically split into batches
+ * of maximum 100 comments.
  *
  * ============================================================
  */
@@ -58,12 +53,87 @@ const SHOPEE_PARTNER_KEY =
     .replace(/['"]/g, '');
 
 /**
+ * Shopee maximum comment_list size.
+ */
+const SHOPEE_MAX_BATCH_SIZE = 100;
+
+/**
+ * ============================================================
+ * TYPES
+ * ============================================================
+ */
+
+type ReviewRecord =
+  Awaited<
+    ReturnType<
+      typeof prisma.review.findMany
+    >
+  >[number];
+
+type ShopeeComment = {
+  comment_id: number;
+  comment: string;
+};
+
+type EligibleReview = {
+  review: ReviewRecord;
+  comment: ShopeeComment;
+};
+
+type ShopeeResult = {
+  comment_id?: number | string;
+  fail_error?: string | null;
+  fail_message?: string | null;
+  message?: string | null;
+  [key: string]: unknown;
+};
+
+type ShopeeApiResponse = {
+  error?: string | null;
+  message?: string | null;
+  response?: {
+    result_list?: ShopeeResult[];
+    [key: string]: unknown;
+  };
+  data?: {
+    result_list?: ShopeeResult[];
+    [key: string]: unknown;
+  };
+  result_list?: ShopeeResult[];
+  [key: string]: unknown;
+};
+
+type ShopeeCallResult = {
+  httpStatus: number;
+  ok: boolean;
+  data: ShopeeApiResponse;
+};
+
+type ReplyResult = {
+  id: string;
+  reviewId?: string | number | null;
+  success: boolean;
+  skipped?: boolean;
+  alreadyReplied?: boolean;
+  shopeePosted?: boolean;
+  batch?: number;
+  error?: string | {
+    failError: string;
+    failMessage: string;
+  } | null;
+  message?: string;
+  shopeeResponse?: unknown;
+};
+
+/**
  * ============================================================
  * ERROR HELPER
  * ============================================================
  */
 
-function getErrorMessage(error: unknown): string {
+function getErrorMessage(
+  error: unknown
+): string {
   if (!error) {
     return 'Unknown error';
   }
@@ -89,7 +159,7 @@ function getErrorMessage(error: unknown): string {
  * ============================================================
  */
 
-function validateShopeeConfig() {
+function validateShopeeConfig(): void {
   if (!SHOPEE_PARTNER_ID) {
     throw new Error(
       'SHOPEE_PARTNER_ID is not configured.'
@@ -117,7 +187,7 @@ function createShopeeSignature({
   timestamp: number;
   accessToken: string;
   shopId: string;
-}) {
+}): string {
   const baseString =
     `${SHOPEE_PARTNER_ID}` +
     `${SHOPEE_REPLY_PATH}` +
@@ -150,63 +220,28 @@ function createShopeeUrl({
   accessToken: string;
   shopId: string;
   sign: string;
-}) {
-  const params = new URLSearchParams({
-    partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
-    access_token: accessToken,
-    shop_id: shopId,
-    sign,
-  });
+}): string {
+  const params =
+    new URLSearchParams({
+      partner_id:
+        SHOPEE_PARTNER_ID,
+
+      timestamp:
+        String(timestamp),
+
+      access_token:
+        accessToken,
+
+      shop_id:
+        shopId,
+
+      sign,
+    });
 
   return (
     `${SHOPEE_HOST}` +
     `${SHOPEE_REPLY_PATH}` +
     `?${params.toString()}`
-  );
-}
-
-/**
- * ============================================================
- * PLACEHOLDER VALIDATION
- * ============================================================
- */
-
-function containsPlaceholder(reply: string): boolean {
-  const placeholders = [
-    '[Company Name]',
-    '[Your Company Name]',
-    '[Customer Service Team]',
-    '[Your Customer Service Team]',
-    '[Customer Service]',
-    '[Brand Name]',
-    '[Your Brand]',
-    '[Store Name]',
-    '[Customer Name]',
-    '[Product Name]',
-  ];
-
-  const hasKnownPlaceholder =
-    placeholders.some((placeholder) =>
-      reply.includes(placeholder)
-    );
-
-  /**
-   * Reject any remaining bracket placeholders.
-   *
-   * Examples:
-   *
-   * [company]
-   * [customer]
-   * [insert name]
-   * [product]
-   */
-  const hasBracketPlaceholder =
-    /\[[^\]]+\]/.test(reply);
-
-  return (
-    hasKnownPlaceholder ||
-    hasBracketPlaceholder
   );
 }
 
@@ -226,7 +261,52 @@ function cleanReply(
 
 /**
  * ============================================================
- * VALIDATE REPLY
+ * PLACEHOLDER VALIDATION
+ * ============================================================
+ */
+
+function containsPlaceholder(
+  reply: string
+): boolean {
+  const knownPlaceholders = [
+    '[Company Name]',
+    '[Your Company Name]',
+    '[Customer Service Team]',
+    '[Your Customer Service Team]',
+    '[Customer Service]',
+    '[Brand Name]',
+    '[Your Brand]',
+    '[Store Name]',
+    '[Customer Name]',
+    '[Product Name]',
+  ];
+
+  const hasKnownPlaceholder =
+    knownPlaceholders.some(
+      (placeholder) =>
+        reply.includes(placeholder)
+    );
+
+  /**
+   * Reject generic bracket placeholders:
+   *
+   * [company]
+   * [customer]
+   * [insert name]
+   * [product]
+   */
+  const hasBracketPlaceholder =
+    /\[[^\]]+\]/.test(reply);
+
+  return (
+    hasKnownPlaceholder ||
+    hasBracketPlaceholder
+  );
+}
+
+/**
+ * ============================================================
+ * VALIDATE AI REPLY
  * ============================================================
  */
 
@@ -237,13 +317,15 @@ function validateReply(
   reply: string;
   reason?: string;
 } {
-  const reply = cleanReply(value);
+  const reply =
+    cleanReply(value);
 
   if (!reply) {
     return {
       valid: false,
       reply,
-      reason: 'AI reply is empty.',
+      reason:
+        'AI reply is empty.',
     };
   }
 
@@ -265,7 +347,9 @@ function validateReply(
     };
   }
 
-  if (containsPlaceholder(reply)) {
+  if (
+    containsPlaceholder(reply)
+  ) {
     return {
       valid: false,
       reply,
@@ -282,34 +366,73 @@ function validateReply(
 
 /**
  * ============================================================
+ * SPLIT ARRAY INTO BATCHES
+ * ============================================================
+ */
+
+function chunkArray<T>(
+  items: T[],
+  size: number
+): T[][] {
+  const batches: T[][] = [];
+
+  for (
+    let i = 0;
+    i < items.length;
+    i += size
+  ) {
+    batches.push(
+      items.slice(
+        i,
+        i + size
+      )
+    );
+  }
+
+  return batches;
+}
+
+/**
+ * ============================================================
  * EXTRACT RESULT LIST
  * ============================================================
  */
 
 function extractResultList(
-  data: any
-): any[] {
+  data: ShopeeApiResponse
+): ShopeeResult[] {
   const resultList =
-    data?.response?.result_list ??
-    data?.data?.result_list ??
+    data?.response
+      ?.result_list ??
+    data?.data
+      ?.result_list ??
     data?.result_list ??
     [];
 
-  return Array.isArray(resultList)
-    ? resultList
-    : [];
+  if (
+    !Array.isArray(
+      resultList
+    )
+  ) {
+    return [];
+  }
+
+  return resultList;
 }
 
 /**
  * ============================================================
- * DETECT TOP LEVEL SHOPEE ERROR
+ * TOP LEVEL SHOPEE ERROR
  * ============================================================
  */
 
 function getShopeeTopLevelError(
-  data: any
+  data: ShopeeApiResponse
 ): string | null {
-  if (!data || typeof data !== 'object') {
+  if (
+    !data ||
+    typeof data !== 'object'
+  ) {
     return null;
   }
 
@@ -321,11 +444,16 @@ function getShopeeTopLevelError(
 
   if (
     error &&
-    String(error).toLowerCase() !== '0'
+    String(error)
+      .toLowerCase() !== '0'
   ) {
     return (
       `${String(error)}` +
-      `${message ? `: ${String(message)}` : ''}`
+      `${
+        message
+          ? `: ${String(message)}`
+          : ''
+      }`
     );
   }
 
@@ -334,7 +462,7 @@ function getShopeeTopLevelError(
 
 /**
  * ============================================================
- * CALL SHOPEE BULK REPLY
+ * CALL SHOPEE REPLY API
  * ============================================================
  */
 
@@ -345,12 +473,26 @@ async function callShopeeBulkReply({
 }: {
   shopId: string;
   accessToken: string;
-  commentList: Array<{
-    comment_id: number;
-    comment: string;
-  }>;
-}) {
+  commentList: ShopeeComment[];
+}): Promise<ShopeeCallResult> {
   validateShopeeConfig();
+
+  if (
+    commentList.length < 1
+  ) {
+    throw new Error(
+      'Cannot call Shopee reply_comment with an empty comment_list.'
+    );
+  }
+
+  if (
+    commentList.length >
+    SHOPEE_MAX_BATCH_SIZE
+  ) {
+    throw new Error(
+      `Shopee comment_list cannot exceed ${SHOPEE_MAX_BATCH_SIZE} items. Received ${commentList.length}.`
+    );
+  }
 
   const timestamp =
     Math.floor(
@@ -373,7 +515,7 @@ async function callShopeeBulkReply({
     });
 
   console.log(
-    `[Shopee Bulk Reply] Calling Shopee API`
+    '[Shopee Bulk Reply] Calling Shopee API'
   );
 
   console.log(
@@ -387,7 +529,8 @@ async function callShopeeBulkReply({
   console.log(
     '[Shopee Bulk Reply] comment IDs:',
     commentList.map(
-      (item) => item.comment_id
+      (item) =>
+        item.comment_id
     )
   );
 
@@ -413,11 +556,13 @@ async function callShopeeBulkReply({
   const rawText =
     await response.text();
 
-  let data: any;
+  let data: ShopeeApiResponse;
 
   try {
     data =
-      JSON.parse(rawText);
+      JSON.parse(
+        rawText
+      ) as ShopeeApiResponse;
   } catch {
     data = {
       error:
@@ -449,6 +594,41 @@ async function callShopeeBulkReply({
 
 /**
  * ============================================================
+ * UPDATE REVIEW AFTER SHOPEE SUCCESS
+ * ============================================================
+ */
+
+async function markReviewReplied(
+  review: ReviewRecord
+): Promise<void> {
+  await prisma.review.update({
+    where: {
+      id:
+        review.id,
+    },
+
+    data: {
+      status:
+        'REPLIED',
+
+      repliedAt:
+        review.repliedAt ||
+        new Date(),
+
+      finalReply:
+        review.finalReply ||
+        cleanReply(
+          review.aiReply
+        ),
+
+      repliedBy:
+        'AI',
+    },
+  });
+}
+
+/**
+ * ============================================================
  * POST
  * ============================================================
  */
@@ -471,7 +651,7 @@ export async function POST(
      * ========================================================
      */
 
-    let body: any;
+    let body: unknown;
 
     try {
       body =
@@ -491,12 +671,16 @@ export async function POST(
 
     /**
      * ========================================================
-     * IDS
+     * EXTRACT IDS
      * ========================================================
      */
 
     const ids =
-      body?.ids;
+      (
+        body as {
+          ids?: unknown;
+        }
+      )?.ids;
 
     if (
       !Array.isArray(ids) ||
@@ -515,7 +699,9 @@ export async function POST(
     }
 
     /**
-     * Remove duplicates.
+     * ========================================================
+     * CLEAN IDS
+     * ========================================================
      */
 
     const uniqueIds =
@@ -523,10 +709,13 @@ export async function POST(
         new Set(
           ids
             .filter(
-              (id: unknown) =>
+              (
+                id: unknown
+              ): id is string =>
                 typeof id ===
                   'string' &&
                 id.trim()
+                  .length > 0
             )
             .map(
               (id: string) =>
@@ -564,37 +753,33 @@ export async function POST(
       await prisma.review.findMany({
         where: {
           id: {
-            in: uniqueIds,
+            in:
+              uniqueIds,
           },
 
           marketplace:
             'SHOPEE',
 
-          /**
-           * Do not resend reviews already marked REPLIED.
-           */
-
           status: {
-            not: 'REPLIED',
+            not:
+              'REPLIED',
           },
-
-          /**
-           * AI reply must exist.
-           */
 
           aiReply: {
-            not: null,
+            not:
+              null,
           },
 
-          /**
-           * Shopee shop must exist.
-           */
-
           shopId: {
-            not: null,
+            not:
+              null,
           },
         },
       });
+
+    console.log(
+      `[Shopee Bulk Reply] Loaded eligible DB candidates: ${reviews.length}`
+    );
 
     /**
      * ========================================================
@@ -602,7 +787,8 @@ export async function POST(
      * ========================================================
      */
 
-    const results: any[] = [];
+    const results: ReplyResult[] =
+      [];
 
     /**
      * ========================================================
@@ -610,132 +796,166 @@ export async function POST(
      * ========================================================
      */
 
-    const eligibleReviews =
-      reviews.filter(
-        (review) => {
-          const validation =
-            validateReply(
-              review.aiReply
-            );
+    const eligibleReviews:
+      EligibleReview[] =
+      [];
 
-          if (
-            !validation.valid
-          ) {
-            results.push({
-              id:
-                review.id,
+    for (
+      const review of
+        reviews
+    ) {
+      /**
+       * Validate AI reply.
+       */
 
-              reviewId:
-                review.reviewId,
+      const validation =
+        validateReply(
+          review.aiReply
+        );
 
-              success:
-                false,
+      if (
+        !validation.valid
+      ) {
+        results.push({
+          id:
+            review.id,
 
-              skipped:
-                true,
+          reviewId:
+            review.reviewId,
 
-              error:
-                validation.reason ||
-                'Invalid AI reply.',
-            });
+          success:
+            false,
 
-            return false;
-          }
+          skipped:
+            true,
 
-          if (
-            review.reviewId ===
-              null ||
-            review.reviewId ===
-              undefined ||
-            String(
+          error:
+            validation.reason ||
+            'Invalid AI reply.',
+        });
+
+        continue;
+      }
+
+      /**
+       * Validate Shopee review/comment ID.
+       */
+
+      if (
+        review.reviewId ===
+          null ||
+        review.reviewId ===
+          undefined ||
+        String(
+          review.reviewId
+        ).trim() === ''
+      ) {
+        results.push({
+          id:
+            review.id,
+
+          reviewId:
+            review.reviewId,
+
+          success:
+            false,
+
+          skipped:
+            true,
+
+          error:
+            'Missing Shopee reviewId/commentId.',
+        });
+
+        continue;
+      }
+
+      /**
+       * Validate shop ID.
+       */
+
+      if (
+        review.shopId ===
+          null ||
+        review.shopId ===
+          undefined ||
+        String(
+          review.shopId
+        ).trim() === ''
+      ) {
+        results.push({
+          id:
+            review.id,
+
+          reviewId:
+            review.reviewId,
+
+          success:
+            false,
+
+          skipped:
+            true,
+
+          error:
+            'Missing Shopee shopId.',
+        });
+
+        continue;
+      }
+
+      /**
+       * Convert comment ID.
+       */
+
+      const commentId =
+        Number(
+          review.reviewId
+        );
+
+      if (
+        !Number.isSafeInteger(
+          commentId
+        ) ||
+        commentId <= 0
+      ) {
+        results.push({
+          id:
+            review.id,
+
+          reviewId:
+            review.reviewId,
+
+          success:
+            false,
+
+          skipped:
+            true,
+
+          error:
+            `Invalid Shopee commentId: ${String(
               review.reviewId
-            ).trim() === ''
-          ) {
-            results.push({
-              id:
-                review.id,
+            )}`,
+        });
 
-              reviewId:
-                review.reviewId,
+        continue;
+      }
 
-              success:
-                false,
+      /**
+       * Build strongly typed eligible record.
+       */
 
-              skipped:
-                true,
+      eligibleReviews.push({
+        review,
 
-              error:
-                'Missing Shopee reviewId/commentId.',
-            });
+        comment: {
+          comment_id:
+            commentId,
 
-            return false;
-          }
-
-          if (
-            review.shopId ===
-              null ||
-            review.shopId ===
-              undefined ||
-            String(
-              review.shopId
-            ).trim() === ''
-          ) {
-            results.push({
-              id:
-                review.id,
-
-              reviewId:
-                review.reviewId,
-
-              success:
-                false,
-
-              skipped:
-                true,
-
-              error:
-                'Missing Shopee shopId.',
-            });
-
-            return false;
-          }
-
-          const commentId =
-            Number(
-              review.reviewId
-            );
-
-          if (
-            !Number.isSafeInteger(
-              commentId
-            ) ||
-            commentId <= 0
-          ) {
-            results.push({
-              id:
-                review.id,
-
-              reviewId:
-                review.reviewId,
-
-              success:
-                false,
-
-              skipped:
-                true,
-
-              error:
-                `Invalid Shopee commentId: ${String(
-                  review.reviewId
-                )}`,
-            });
-
-            return false;
-          }
-
-          return true;
-        }
-      );
+          comment:
+            validation.reply,
+        },
+      });
+    }
 
     /**
      * ========================================================
@@ -745,21 +965,24 @@ export async function POST(
 
     if (
       eligibleReviews.length ===
-        0
+      0
     ) {
       return NextResponse.json(
         {
           success:
-            results.some(
-              (item) =>
-                item.success
-            ),
+            false,
 
           posted:
             0,
 
           failed:
             results.length,
+
+          alreadyReplied:
+            0,
+
+          shopeePostedButDbFailed:
+            0,
 
           total:
             results.length,
@@ -770,7 +993,7 @@ export async function POST(
             'No eligible Shopee reviews found.',
         },
         {
-          status: 400,
+          status: 200,
         }
       );
     }
@@ -780,38 +1003,34 @@ export async function POST(
      * GROUP BY EXACT SHOP ID
      * ========================================================
      *
-     * IMPORTANT:
-     *
      * Review.shopId is the source of truth.
      *
-     * Never use:
+     * NEVER use:
      *
      * - storeName
-     * - store.brand
-     * - store name
+     * - brand name
      * - marketplace display name
      *
+     * ========================================================
      */
 
     const byShop =
       new Map<
         string,
-        typeof eligibleReviews
+        EligibleReview[]
       >();
 
     for (
-      const review of
+      const item of
         eligibleReviews
     ) {
       const shopId =
         String(
-          review.shopId
+          item.review.shopId
         ).trim();
 
       if (
-        !byShop.has(
-          shopId
-        )
+        !byShop.has(shopId)
       ) {
         byShop.set(
           shopId,
@@ -819,10 +1038,21 @@ export async function POST(
         );
       }
 
-      byShop
-        .get(shopId)!
-        .push(review);
+      const shopItems =
+        byShop.get(
+          shopId
+        );
+
+      if (shopItems) {
+        shopItems.push(
+          item
+        );
+      }
     }
+
+    console.log(
+      `[Shopee Bulk Reply] Shops to process: ${byShop.size}`
+    );
 
     /**
      * ========================================================
@@ -833,144 +1063,75 @@ export async function POST(
     for (
       const [
         shopId,
-        shopReviews,
-      ] of byShop.entries()
+        shopItems,
+      ] of byShop
     ) {
       console.log(
-        `[Shopee Bulk Reply] Processing shop=${shopId} reviews=${shopReviews.length}`
+        '============================================================'
+      );
+
+      console.log(
+        `[Shopee Bulk Reply] Processing shop=${shopId} reviews=${shopItems.length}`
       );
 
       /**
        * ======================================================
-       * GET VALID ACCESS TOKEN
+       * LOAD ACCESS TOKEN
        * ======================================================
        *
-       * Your existing ShopService handles token validity/
-       * refresh.
-       */
-
-let accessToken: string;
-
-try {
-  const account =
-    await prisma.shopeeAccount.findUnique({
-      where: {
-        shopId: BigInt(shopId),
-      },
-    });
-
-  if (!account) {
-    throw new Error(
-      `No Shopee account found for shop ${shopId}.`
-    );
-  }
-
-  if (!account.accessToken) {
-    throw new Error(
-      `Shopee account ${shopId} has no access token.`
-    );
-  }
-
-  accessToken = String(
-    account.accessToken
-  ).trim();
-
-  if (!accessToken) {
-    throw new Error(
-      `Shopee account ${shopId} has an empty access token.`
-    );
-  }
-
-  console.log(
-    `[Shopee Bulk Reply] Token loaded successfully shop=${shopId}`
-  );
-} catch (error) {
-  const message =
-    getErrorMessage(error);
-
-  console.error(
-    `[Shopee Bulk Reply] Token error shop=${shopId}:`,
-    message
-  );
-
-  for (
-    const review of shopReviews
-  ) {
-    results.push({
-      id: review.id,
-      reviewId: review.reviewId,
-      success: false,
-      error:
-        `Unable to obtain Shopee access token: ${message}`,
-    });
-  }
-
-  continue;
-}
-
-      /**
-       * ======================================================
-       * BUILD COMMENT LIST
+       * We intentionally use:
+       *
+       * prisma.shopeeAccount
+       *
+       * instead of ShopService so this route has no dependency
+       * on a possibly different token service API.
+       *
        * ======================================================
        */
 
-      const commentList =
-        shopReviews.map(
-          (review) => ({
-            comment_id:
-              Number(
-                review.reviewId
-              ),
-
-            comment:
-              cleanReply(
-                review.aiReply
-              ),
-          })
-        );
-
-      console.log(
-        `[Shopee Bulk Reply] shop=${shopId} sending ${commentList.length} comments`
-      );
-
-      console.log(
-        '[Shopee Bulk Reply] Payload summary:',
-        JSON.stringify(
-          commentList.map(
-            (item) => ({
-              comment_id:
-                item.comment_id,
-
-              comment_length:
-                item.comment.length,
-            })
-          ),
-          null,
-          2
-        )
-      );
-
-      /**
-       * ======================================================
-       * CALL SHOPEE
-       * ======================================================
-       */
-
-      let callResult: {
-        httpStatus: number;
-        ok: boolean;
-        data: any;
-      };
+      let accessToken: string;
 
       try {
-        callResult =
-          await callShopeeBulkReply({
-            shopId,
-
-            accessToken,
-
-            commentList,
+        const account =
+          await prisma.shopeeAccount.findUnique({
+            where: {
+              shopId:
+                BigInt(
+                  shopId
+                ),
+            },
           });
+
+        if (!account) {
+          throw new Error(
+            `No Shopee account found for shop ${shopId}.`
+          );
+        }
+
+        if (
+          !account.accessToken
+        ) {
+          throw new Error(
+            `Shopee account ${shopId} has no access token.`
+          );
+        }
+
+        accessToken =
+          String(
+            account.accessToken
+          ).trim();
+
+        if (
+          !accessToken
+        ) {
+          throw new Error(
+            `Shopee account ${shopId} has an empty access token.`
+          );
+        }
+
+        console.log(
+          `[Shopee Bulk Reply] Token loaded successfully shop=${shopId}`
+        );
       } catch (error) {
         const message =
           getErrorMessage(
@@ -978,77 +1139,26 @@ try {
           );
 
         console.error(
-          `[Shopee Bulk Reply] API call error shop=${shopId}:`,
+          `[Shopee Bulk Reply] Token error shop=${shopId}:`,
           message
         );
 
         for (
-          const review of
-            shopReviews
+          const item of
+            shopItems
         ) {
           results.push({
             id:
-              review.id,
+              item.review.id,
 
             reviewId:
-              review.reviewId,
+              item.review.reviewId,
 
             success:
               false,
 
             error:
-              message,
-          });
-        }
-
-        continue;
-      }
-
-      const shopeeResponse =
-        callResult.data;
-
-      /**
-       * ======================================================
-       * HTTP ERROR
-       * ======================================================
-       */
-
-      if (
-        !callResult.ok
-      ) {
-        const errorMessage =
-          getShopeeTopLevelError(
-            shopeeResponse
-          ) ||
-          `Shopee HTTP ${callResult.httpStatus}.`;
-
-        console.error(
-          `[Shopee Bulk Reply] HTTP failure shop=${shopId}`,
-          JSON.stringify(
-            shopeeResponse,
-            null,
-            2
-          )
-        );
-
-        for (
-          const review of
-            shopReviews
-        ) {
-          results.push({
-            id:
-              review.id,
-
-            reviewId:
-              review.reviewId,
-
-            success:
-              false,
-
-            error:
-              errorMessage,
-
-            shopeeResponse,
+              `Unable to obtain Shopee access token: ${message}`,
           });
         }
 
@@ -1057,395 +1167,683 @@ try {
 
       /**
        * ======================================================
-       * TOP LEVEL BUSINESS ERROR
+       * SPLIT SHOP INTO MAX 100
        * ======================================================
        */
 
-      const topLevelError =
-        getShopeeTopLevelError(
-          shopeeResponse
-        );
-
-      if (
-        topLevelError
-      ) {
-        console.error(
-          `[Shopee Bulk Reply] Business failure shop=${shopId}: ${topLevelError}`
-        );
-
-        for (
-          const review of
-            shopReviews
-        ) {
-          results.push({
-            id:
-              review.id,
-
-            reviewId:
-              review.reviewId,
-
-            success:
-              false,
-
-            error:
-              topLevelError,
-
-            shopeeResponse,
-          });
-        }
-
-        continue;
-      }
-
-      /**
-       * ======================================================
-       * RESULT LIST
-       * ======================================================
-       */
-
-      const resultList =
-        extractResultList(
-          shopeeResponse
+      const batches =
+        chunkArray(
+          shopItems,
+          SHOPEE_MAX_BATCH_SIZE
         );
 
       console.log(
-        `[Shopee Bulk Reply] shop=${shopId} result count=${resultList.length}`
-      );
-
-      console.log(
-        `[Shopee Bulk Reply] shop=${shopId} result list:`,
-        JSON.stringify(
-          resultList,
-          null,
-          2
-        )
+        `[Shopee Bulk Reply] shop=${shopId} total=${shopItems.length} batches=${batches.length}`
       );
 
       /**
        * ======================================================
-       * NEVER ASSUME SUCCESS WITHOUT RESULT LIST
-       * ======================================================
-       */
-
-      if (
-        resultList.length ===
-        0
-      ) {
-        for (
-          const review of
-            shopReviews
-        ) {
-          results.push({
-            id:
-              review.id,
-
-            reviewId:
-              review.reviewId,
-
-            success:
-              false,
-
-            error:
-              'Shopee returned no per-comment result_list.',
-
-            shopeeResponse,
-          });
-        }
-
-        continue;
-      }
-
-      /**
-       * ======================================================
-       * MATCH EACH REVIEW
+       * PROCESS EACH 100-ITEM BATCH
        * ======================================================
        */
 
       for (
-        const review of
-          shopReviews
+        let batchIndex = 0;
+        batchIndex <
+        batches.length;
+        batchIndex++
       ) {
-        const reviewId =
-          String(
-            review.reviewId
-          );
+        const batch =
+          batches[
+            batchIndex
+          ];
 
-        const result =
-          resultList.find(
-            (item: any) =>
-              String(
-                item?.comment_id
-              ) ===
-              reviewId
-          );
+        const batchNumber =
+          batchIndex + 1;
+
+        console.log(
+          '------------------------------------------------------------'
+        );
+
+        console.log(
+          `[Shopee Bulk Reply] shop=${shopId} batch=${batchNumber}/${batches.length} size=${batch.length}`
+        );
 
         /**
-         * ====================================================
-         * NO RESULT FOR COMMENT
-         * ====================================================
+         * Safety check.
          */
 
         if (
-          !result
+          batch.length === 0
         ) {
-          console.error(
-            `[Shopee Reply] No result returned for review=${reviewId}`
+          console.warn(
+            `[Shopee Bulk Reply] Skipping empty batch shop=${shopId} batch=${batchNumber}`
           );
 
-          results.push({
-            id:
-              review.id,
+          continue;
+        }
 
-            reviewId:
-              review.reviewId,
+        if (
+          batch.length >
+          SHOPEE_MAX_BATCH_SIZE
+        ) {
+          console.error(
+            `[Shopee Bulk Reply] INTERNAL ERROR: batch too large shop=${shopId} size=${batch.length}`
+          );
 
-            success:
-              false,
+          for (
+            const item of
+              batch
+          ) {
+            results.push({
+              id:
+                item.review.id,
 
-            error:
-              'Shopee returned no result for this comment.',
+              reviewId:
+                item.review.reviewId,
 
-            shopeeResponse:
-              resultList,
-          });
+              success:
+                false,
+
+              batch:
+                batchNumber,
+
+              error:
+                `Internal error: batch contains ${batch.length} items. Maximum is ${SHOPEE_MAX_BATCH_SIZE}.`,
+            });
+          }
 
           continue;
         }
 
         /**
          * ====================================================
-         * PER-COMMENT FAILURE
+         * BUILD COMMENT LIST
+         * ====================================================
+         */
+
+        const commentList:
+          ShopeeComment[] =
+          batch.map(
+            (
+              item: EligibleReview
+            ): ShopeeComment =>
+              item.comment
+          );
+
+        console.log(
+          `[Shopee Bulk Reply] shop=${shopId} batch=${batchNumber} sending ${commentList.length} comments`
+        );
+
+        console.log(
+          `[Shopee Bulk Reply] shop=${shopId} batch=${batchNumber} comment IDs:`,
+          commentList.map(
+            (
+              item: ShopeeComment
+            ) =>
+              item.comment_id
+          )
+        );
+
+        /**
+         * ====================================================
+         * CALL SHOPEE
+         * ====================================================
+         */
+
+        let callResult:
+          ShopeeCallResult;
+
+        try {
+          callResult =
+            await callShopeeBulkReply(
+              {
+                shopId,
+
+                accessToken,
+
+                commentList,
+              }
+            );
+        } catch (error) {
+          const message =
+            getErrorMessage(
+              error
+            );
+
+          console.error(
+            `[Shopee Bulk Reply] API call error shop=${shopId} batch=${batchNumber}:`,
+            message
+          );
+
+          for (
+            const item of
+              batch
+          ) {
+            results.push({
+              id:
+                item.review.id,
+
+              reviewId:
+                item.review.reviewId,
+
+              success:
+                false,
+
+              batch:
+                batchNumber,
+
+              error:
+                message,
+            });
+          }
+
+          continue;
+        }
+
+        const shopeeResponse =
+          callResult.data;
+
+        /**
+         * ====================================================
+         * HTTP ERROR
          * ====================================================
          */
 
         if (
-          result.fail_error ||
-          result.fail_message
+          !callResult.ok
         ) {
-          const failError =
-            String(
-              result.fail_error ||
-                'UNKNOWN_ERROR'
-            );
+          const errorMessage =
+            getShopeeTopLevelError(
+              shopeeResponse
+            ) ||
+            `Shopee HTTP ${callResult.httpStatus}.`;
 
-          const failMessage =
-            String(
-              result.fail_message ||
-                result.message ||
-                'Shopee did not provide a failure message.'
-            );
+          console.error(
+            `[Shopee Bulk Reply] HTTP failure shop=${shopId} batch=${batchNumber}`,
+            JSON.stringify(
+              shopeeResponse,
+              null,
+              2
+            )
+          );
+
+          for (
+            const item of
+              batch
+          ) {
+            results.push({
+              id:
+                item.review.id,
+
+              reviewId:
+                item.review.reviewId,
+
+              success:
+                false,
+
+              batch:
+                batchNumber,
+
+              error:
+                errorMessage,
+
+              shopeeResponse,
+            });
+          }
+
+          continue;
+        }
+
+        /**
+         * ====================================================
+         * TOP LEVEL BUSINESS ERROR
+         * ====================================================
+         */
+
+        const topLevelError =
+          getShopeeTopLevelError(
+            shopeeResponse
+          );
+
+        if (
+          topLevelError
+        ) {
+          console.error(
+            `[Shopee Bulk Reply] Business failure shop=${shopId} batch=${batchNumber}: ${topLevelError}`
+          );
 
           /**
-           * ==================================================
-           * ALREADY REPLIED
-           * ==================================================
+           * IMPORTANT:
            *
-           * Shopee:
+           * If Shopee says common.batch_api_all_failed,
+           * we MUST inspect result_list.
            *
-           * product.duplicate_request
+           * So do NOT immediately mark all records failed.
            *
-           * means the comment has already been replied to.
-           *
-           * Treat as successful synchronization.
+           * Continue into result_list processing.
            */
 
-          if (
-            failError ===
-            'product.duplicate_request'
-          ) {
-            console.log(
-              `[Shopee Reply ALREADY REPLIED] review=${reviewId} shop=${shopId}`
+          const preliminaryResultList =
+            extractResultList(
+              shopeeResponse
             );
 
-            try {
-              await prisma.review.update({
-                where: {
-                  id:
-                    review.id,
-                },
-
-                data: {
-                  status:
-                    'REPLIED',
-
-                  repliedAt:
-                    review.repliedAt ||
-                    new Date(),
-
-                  finalReply:
-                    review.finalReply ||
-                    cleanReply(
-                      review.aiReply
-                    ),
-
-                  repliedBy:
-                    'AI',
-                },
-              });
-
+          if (
+            preliminaryResultList.length ===
+            0
+          ) {
+            for (
+              const item of
+                batch
+            ) {
               results.push({
                 id:
-                  review.id,
+                  item.review.id,
 
                 reviewId:
-                  review.reviewId,
-
-                success:
-                  true,
-
-                alreadyReplied:
-                  true,
-
-                error:
-                  null,
-
-                message:
-                  failMessage,
-              });
-            } catch (dbError) {
-              results.push({
-                id:
-                  review.id,
-
-                reviewId:
-                  review.reviewId,
+                  item.review.reviewId,
 
                 success:
                   false,
 
+                batch:
+                  batchNumber,
+
                 error:
-                  `Shopee says already replied, but database update failed: ${getErrorMessage(
-                    dbError
-                  )}`,
+                  topLevelError,
+
+                shopeeResponse,
               });
             }
 
             continue;
           }
 
-          /**
-           * ==================================================
-           * REAL SHOPEE FAILURE
-           * ==================================================
-           */
+          console.log(
+            `[Shopee Bulk Reply] shop=${shopId} batch=${batchNumber} top-level failure contains result_list=${preliminaryResultList.length}; processing individual results`
+          );
+        }
 
-          console.error(
-            `[Shopee Reply FAILED] review=${reviewId}`,
-            JSON.stringify(
-              result,
-              null,
-              2
-            )
+        /**
+         * ====================================================
+         * EXTRACT PER COMMENT RESULTS
+         * ====================================================
+         */
+
+        const resultList =
+          extractResultList(
+            shopeeResponse
           );
 
-          results.push({
-            id:
-              review.id,
+        console.log(
+          `[Shopee Bulk Reply] shop=${shopId} batch=${batchNumber} result count=${resultList.length}`
+        );
 
-            reviewId:
-              review.reviewId,
+        console.log(
+          `[Shopee Bulk Reply] shop=${shopId} batch=${batchNumber} result list:`,
+          JSON.stringify(
+            resultList,
+            null,
+            2
+          )
+        );
 
-            success:
-              false,
+        /**
+         * ====================================================
+         * NO RESULT LIST
+         * ====================================================
+         */
 
-            error: {
-              failError,
-              failMessage,
-            },
+        if (
+          resultList.length ===
+          0
+        ) {
+          const errorMessage =
+            topLevelError ||
+            'Shopee returned no per-comment result_list.';
 
-            shopeeResponse:
-              result,
-          });
+          for (
+            const item of
+              batch
+          ) {
+            results.push({
+              id:
+                item.review.id,
+
+              reviewId:
+                item.review.reviewId,
+
+              success:
+                false,
+
+              batch:
+                batchNumber,
+
+              error:
+                errorMessage,
+
+              shopeeResponse,
+            });
+          }
 
           continue;
         }
 
         /**
          * ====================================================
-         * SUCCESS
+         * MATCH EACH COMMENT
          * ====================================================
-         *
-         * No fail_error/fail_message means Shopee accepted
-         * this comment.
          */
 
-        try {
-          await prisma.review.update({
-            where: {
-              id:
-                review.id,
-            },
+        for (
+          const item of
+            batch
+        ) {
+          const reviewId =
+            String(
+              item.review.reviewId
+            );
 
-            data: {
-              status:
-                'REPLIED',
-
-              repliedAt:
-                new Date(),
-
-              finalReply:
-                cleanReply(
-                  review.aiReply
-                ),
-
-              repliedBy:
-                'AI',
-            },
-          });
-
-          results.push({
-            id:
-              review.id,
-
-            reviewId:
-              review.reviewId,
-
-            success:
-              true,
-
-            alreadyReplied:
-              false,
-
-            error:
-              null,
-          });
-
-          console.log(
-            `[Shopee Reply SUCCESS] review=${reviewId} shop=${shopId}`
-          );
-        } catch (dbError) {
           /**
-           * Important:
-           *
-           * Shopee succeeded but database update failed.
-           *
-           * Do NOT pretend the entire operation failed.
-           * Report the special state so it can be reconciled.
+           * Strongly typed result.
            */
 
-          console.error(
-            `[Shopee Reply] Database update failed after Shopee success review=${reviewId}:`,
-            dbError
-          );
+          const result: ShopeeResult | undefined =
+            resultList.find(
+              (
+                resultItem: ShopeeResult
+              ): boolean =>
+                String(
+                  resultItem.comment_id
+                ) ===
+                reviewId
+            );
 
-          results.push({
-            id:
-              review.id,
+          /**
+           * ==================================================
+           * NO RESULT FOR COMMENT
+           * ==================================================
+           */
 
-            reviewId:
-              review.reviewId,
+          if (!result) {
+            console.error(
+              `[Shopee Reply] No result returned for review=${reviewId} shop=${shopId} batch=${batchNumber}`
+            );
 
-            success:
-              false,
+            results.push({
+              id:
+                item.review.id,
 
-            shopeePosted:
-              true,
+              reviewId:
+                item.review.reviewId,
 
-            error:
-              `Shopee reply succeeded, but database update failed: ${getErrorMessage(
+              success:
+                false,
+
+              batch:
+                batchNumber,
+
+              error:
+                'Shopee returned no result for this comment.',
+
+              shopeeResponse:
+                resultList,
+            });
+
+            continue;
+          }
+
+          /**
+           * ==================================================
+           * EXTRACT FAILURE
+           * ==================================================
+           */
+
+          const failError =
+            result.fail_error
+              ? String(
+                  result.fail_error
+                )
+              : '';
+
+          const failMessage =
+            result.fail_message
+              ? String(
+                  result.fail_message
+                )
+              : String(
+                  result.message ||
+                    ''
+                );
+
+          /**
+           * ==================================================
+           * PER COMMENT FAILURE
+           * ==================================================
+           */
+
+          if (
+            failError ||
+            failMessage
+          ) {
+            /**
+             * ----------------------------------------------
+             * DUPLICATE REQUEST
+             * ----------------------------------------------
+             *
+             * Shopee already has a reply for this comment.
+             *
+             * Treat as synchronized successfully.
+             */
+
+            if (
+              failError ===
+              'product.duplicate_request'
+            ) {
+              console.log(
+                `[Shopee Reply ALREADY REPLIED] review=${reviewId} shop=${shopId} batch=${batchNumber}`
+              );
+
+              try {
+                await markReviewReplied(
+                  item.review
+                );
+
+                results.push({
+                  id:
+                    item.review.id,
+
+                  reviewId:
+                    item.review.reviewId,
+
+                  success:
+                    true,
+
+                  alreadyReplied:
+                    true,
+
+                  batch:
+                    batchNumber,
+
+                  error:
+                    null,
+
+                  message:
+                    failMessage ||
+                    'Shopee reports this comment was already replied to.',
+                });
+              } catch (
                 dbError
-              )}`,
-          });
+              ) {
+                const dbMessage =
+                  getErrorMessage(
+                    dbError
+                  );
+
+                results.push({
+                  id:
+                    item.review.id,
+
+                  reviewId:
+                    item.review.reviewId,
+
+                  success:
+                    false,
+
+                  alreadyReplied:
+                    true,
+
+                  batch:
+                    batchNumber,
+
+                  error:
+                    `Shopee says already replied, but database update failed: ${dbMessage}`,
+                });
+              }
+
+              continue;
+            }
+
+            /**
+             * ----------------------------------------------
+             * REAL SHOPEE FAILURE
+             * ----------------------------------------------
+             */
+
+            console.error(
+              `[Shopee Reply FAILED] review=${reviewId} shop=${shopId} batch=${batchNumber}`,
+              JSON.stringify(
+                result,
+                null,
+                2
+              )
+            );
+
+            results.push({
+              id:
+                item.review.id,
+
+              reviewId:
+                item.review.reviewId,
+
+              success:
+                false,
+
+              batch:
+                batchNumber,
+
+              error: {
+                failError:
+                  failError ||
+                  'UNKNOWN_ERROR',
+
+                failMessage:
+                  failMessage ||
+                  'Shopee did not provide a failure message.',
+              },
+
+              shopeeResponse:
+                result,
+            });
+
+            continue;
+          }
+
+          /**
+           * ==================================================
+           * SHOPEE SUCCESS
+           * ==================================================
+           *
+           * No fail_error/fail_message means Shopee accepted
+           * this comment.
+           */
+
+          try {
+            await markReviewReplied(
+              item.review
+            );
+
+            results.push({
+              id:
+                item.review.id,
+
+              reviewId:
+                item.review.reviewId,
+
+              success:
+                true,
+
+              alreadyReplied:
+                false,
+
+              batch:
+                batchNumber,
+
+              error:
+                null,
+            });
+
+            console.log(
+              `[Shopee Reply SUCCESS] review=${reviewId} shop=${shopId} batch=${batchNumber}`
+            );
+          } catch (
+            dbError
+          ) {
+            const dbMessage =
+              getErrorMessage(
+                dbError
+              );
+
+            console.error(
+              `[Shopee Reply] Database update failed after Shopee success review=${reviewId} shop=${shopId}:`,
+              dbMessage
+            );
+
+            results.push({
+              id:
+                item.review.id,
+
+              reviewId:
+                item.review.reviewId,
+
+              success:
+                false,
+
+              shopeePosted:
+                true,
+
+              batch:
+                batchNumber,
+
+              error:
+                `Shopee reply succeeded, but database update failed: ${dbMessage}`,
+            });
+          }
+        }
+
+        /**
+         * ====================================================
+         * SMALL DELAY BETWEEN BATCHES
+         * ====================================================
+         *
+         * Helps avoid unnecessarily hammering the API when
+         * thousands of reviews are being processed.
+         */
+
+        if (
+          batchIndex <
+          batches.length - 1
+        ) {
+          await new Promise(
+            (
+              resolve
+            ) =>
+              setTimeout(
+                resolve,
+                150
+              )
+          );
         }
       }
     }
@@ -1454,20 +1852,14 @@ try {
      * ========================================================
      * REQUESTED IDS THAT WERE NOT LOADED
      * ========================================================
-     *
-     * This catches:
-     *
-     * - wrong IDs
-     * - already REPLIED reviews
-     * - non-Shopee reviews
-     * - missing AI replies
-     * - missing shopId
      */
 
     const loadedIds =
       new Set(
         reviews.map(
-          (review) =>
+          (
+            review: ReviewRecord
+          ) =>
             review.id
         )
       );
@@ -1481,10 +1873,13 @@ try {
       ) {
         results.push({
           id,
+
           success:
             false,
+
           skipped:
             true,
+
           error:
             'Review was not eligible for Shopee bulk reply. It may not exist, may not be a Shopee review, may already be REPLIED, may have no AI reply, or may have no shopId.',
         });
@@ -1499,35 +1894,59 @@ try {
 
     const succeeded =
       results.filter(
-        (result) =>
+        (
+          result: ReplyResult
+        ) =>
           result.success ===
           true
       ).length;
 
     const failed =
-      results.length -
-      succeeded;
+      results.filter(
+        (
+          result: ReplyResult
+        ) =>
+          result.success !==
+          true
+      ).length;
 
     const alreadyReplied =
       results.filter(
-        (result) =>
+        (
+          result: ReplyResult
+        ) =>
           result.alreadyReplied ===
           true
       ).length;
 
     const shopeePostedButDbFailed =
       results.filter(
-        (result) =>
+        (
+          result: ReplyResult
+        ) =>
           result.shopeePosted ===
           true
       ).length;
 
     console.log(
-      '[Shopee Bulk Reply] FINAL SUMMARY:',
+      '============================================================'
+    );
+
+    console.log(
+      '[Shopee Bulk Reply] FINAL SUMMARY:'
+    );
+
+    console.log(
       JSON.stringify(
         {
           requested:
             uniqueIds.length,
+
+          loaded:
+            reviews.length,
+
+          eligible:
+            eligibleReviews.length,
 
           processed:
             results.length,
@@ -1546,6 +1965,10 @@ try {
       )
     );
 
+    console.log(
+      '============================================================'
+    );
+
     /**
      * ========================================================
      * RESPONSE
@@ -1557,6 +1980,15 @@ try {
         success:
           succeeded > 0 ||
           results.length === 0,
+
+        requested:
+          uniqueIds.length,
+
+        loaded:
+          reviews.length,
+
+        eligible:
+          eligibleReviews.length,
 
         posted:
           succeeded,

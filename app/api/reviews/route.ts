@@ -4,15 +4,41 @@ import { prisma } from '../../../lib/prisma';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url);
+    const brandQuery = searchParams.get('brand');
+    const includeReplied = searchParams.get('includeReplied') === 'true';
+
+    const whereClause: any = {
+      marketplace: 'SHOPEE',
+    };
+
+    if (!includeReplied) {
+      whereClause.status = {
+        not: 'REPLIED',
+      };
+    }
+
+    if (brandQuery && brandQuery.toUpperCase() !== 'ALL') {
+      const upper = brandQuery.trim().toUpperCase();
+      let resolvedBrand = brandQuery.trim();
+
+      if (upper.includes('NICOLE')) resolvedBrand = 'Nicole Collection';
+      else if (upper.includes('RAV')) resolvedBrand = 'RAV Design';
+      else if (upper.includes('HUSH')) resolvedBrand = 'Hush Puppies Accessories';
+      else if (upper.includes('OBERMAIN')) resolvedBrand = 'Obermain';
+      else if (upper.includes('BHPC') || upper.includes('BEVERLY')) resolvedBrand = 'Beverly Hills Polo Club';
+      else if (upper.includes('LANGFORD') || upper.includes('JOHN_LANGFORD')) resolvedBrand = 'JOHN LANGFORD OF LONDON';
+
+      whereClause.brand = {
+        contains: resolvedBrand,
+        mode: 'insensitive',
+      };
+    }
+
     const reviews = await prisma.review.findMany({
-      where: {
-        marketplace: 'SHOPEE',
-        status: {
-          not: 'REPLIED',
-        },
-      },
+      where: whereClause,
       orderBy: {
         createdAt: 'desc',
       },

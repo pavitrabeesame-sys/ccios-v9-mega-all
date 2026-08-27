@@ -1,5 +1,5 @@
 import { prisma as db } from '@/lib/prisma';
-import { askGroq } from '@/src/services/ai/GroqService';
+import { askGroq } from '@/services/ai/GroqService';
 
 /*
 ============================================================

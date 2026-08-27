@@ -5,11 +5,11 @@ import { NextResponse } from "next/server";
 
 import {
   exchangeCodeForToken,
-} from "@/src/services/shopee/AuthService";
+} from "@/services/shopee/AuthService";
 
 import {
   saveToken,
-} from "@/src/services/shopee/TokenService";
+} from "@/services/shopee/TokenService";
 
 
 export async function GET(request) {

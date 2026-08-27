@@ -117,73 +117,84 @@ export default function ReviewsPage() {
   // SYNC SHOPEE
   // =========================================================
 
-  const handleSync = async () => {
-    setSyncing(true);
+  // =========================================================
+// SMART SYNC — SHOPEE + LAZADA
+// =========================================================
 
-    try {
-      const shopsRes = await fetch('/api/shopee/shops', {
-        cache: 'no-store',
-      });
+const handleSync = async () => {
+  setSyncing(true);
+  setSyncProgress('Starting Smart Sync — Shopee + Lazada...');
 
-      const shopsData = await shopsRes.json();
-      const shopIds: string[] = shopsData.shopIds || [];
+  try {
+    const res = await fetch('/api/reviews/smart-sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+      cache: 'no-store',
+    });
 
-      if (shopIds.length === 0) {
-        alert('No authorized Shopee shops found.');
-        return;
-      }
+    const data = await res.json();
 
-      let totalSynced = 0;
-      const errors: string[] = [];
-
-      for (let i = 0; i < shopIds.length; i++) {
-        const shopId = shopIds[i];
-
-        setSyncProgress(
-          `Syncing shop ${i + 1}/${shopIds.length}...`
-        );
-
-        try {
-          const res = await fetch(
-            `/api/reviews/sync?shopId=${shopId}`,
-            { method: 'POST' }
-          );
-
-          const data = await res.json();
-
-          if (data.success) {
-            totalSynced += Number(data.syncedCount || 0);
-          } else {
-            errors.push(
-              `Shop ${shopId}: ${data.error || 'Unknown error'}`
-            );
-          }
-        } catch (err: any) {
-          errors.push(
-            `Shop ${shopId}: ${err?.message || 'Unknown error'}`
-          );
-        }
-      }
-
-      await loadReviews();
-
-      if (errors.length > 0) {
-        alert(
-          `Synced ${totalSynced} reviews. ${errors.length} shop(s) had issues:\n${errors.join('\n')}`
-        );
-      } else {
-        alert(
-          `Successfully synchronized ${totalSynced} reviews across ${shopIds.length} shops!`
-        );
-      }
-    } catch (err) {
-      console.error('Sync failed:', err);
-      alert('Failed to connect to Shopee sync route.');
-    } finally {
-      setSyncing(false);
-      setSyncProgress('');
+    if (!res.ok || !data.success) {
+      throw new Error(
+        data?.error ||
+          data?.message ||
+          'Smart Sync failed.'
+      );
     }
-  };
+
+    const shopeeCount = Number(
+      data?.breakdown?.shopee || 0
+    );
+
+    const lazadaCount = Number(
+      data?.breakdown?.lazada || 0
+    );
+
+    const totalSynced = Number(
+      data?.syncedCount ||
+        shopeeCount + lazadaCount ||
+        0
+    );
+
+    setSyncProgress(
+      `Smart Sync complete — Shopee: ${shopeeCount}, Lazada: ${lazadaCount}`
+    );
+
+    await loadReviews();
+
+    alert(
+      `Smart Sync completed successfully.\n\n` +
+      `Shopee: ${shopeeCount} reviews\n` +
+      `Lazada: ${lazadaCount} reviews\n` +
+      `Total: ${totalSynced} reviews`
+    );
+  } catch (err: any) {
+    console.error(
+      '[Smart Sync] Failed:',
+      err
+    );
+
+    setSyncProgress(
+      'Smart Sync failed.'
+    );
+
+    alert(
+      `Smart Sync failed.\n\n${
+        err?.message ||
+        'Unknown error'
+      }`
+    );
+  } finally {
+    setSyncing(false);
+
+    setTimeout(() => {
+      setSyncProgress('');
+    }, 3000);
+  }
+};
 
   // =========================================================
   // FILTERS
@@ -755,18 +766,18 @@ export default function ReviewsPage() {
           </button>
 
           <button
-            onClick={handleSync}
-            disabled={
-              syncing ||
-              generating ||
-              posting
-            }
-            className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-lg font-medium shadow-lg disabled:opacity-50"
-          >
-            {syncing
-              ? 'Syncing Live...'
-              : 'Sync Live Reviews (Shopee)'}
-          </button>
+  onClick={handleSync}
+  disabled={
+    syncing ||
+    generating ||
+    posting
+  }
+  className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-lg font-medium shadow-lg disabled:opacity-50"
+>
+  {syncing
+    ? 'Smart Syncing...'
+    : 'Smart Sync — Shopee + Lazada'}
+</button>
 
           <div className="bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-xs flex items-center gap-2">
             <span className="text-gray-400">

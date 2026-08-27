@@ -1,6 +1,6 @@
 import Groq from "groq-sdk";
 
-import { validateReply } from "@/src/lib/ai/reply-validator";
+import { validateReply } from "@/lib/ai/reply-validator";
 
 const groq = process.env.GROQ_API_KEY
   ? new Groq({

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { syncShopeeReviews } from "@/src/services/shopee/SyncService";
+import { syncShopeeReviews } from "@/services/shopee/SyncService";
 
 export async function POST() {
 

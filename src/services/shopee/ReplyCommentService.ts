@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { prisma as db } from "@/lib/prisma";
-import { getValidToken } from "@/src/services/shopee/TokenService";
+import { getValidToken } from "@/services/shopee/TokenService";
 
 const SHOPEE_HOST =
   "https://partner.shopeemobile.com";

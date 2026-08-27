@@ -1,6 +1,6 @@
 ﻿import { NextResponse } from 'next/server';
 import { prisma as db } from '@/lib/prisma';
-import { askGroq } from '@/src/services/ai/GroqService';
+import { askGroq } from '@/services/ai/GroqService';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -133,15 +133,32 @@ BRAND REGISTRY & SHOP ID MAPPING
 ============================================================
 */
 
-const SHOP_ID_TO_BRAND_MAP: Record<string, string> = {
-  '66854646': 'Nicole Collection',
-  '282544493': 'Hush Puppies Accessories',
-  '469553987': 'RAV Design',
-  '1788012053': 'Nicole Collection',
+const SHOP_ID_TO_BRAND_MAP = {
+  // OBERMAIN
   '115383763': 'Obermain',
-  '170808053': 'Beverly Hills Polo Club',
+  '1637647671': 'Obermain',
+  '1747523033': 'Obermain',
+  '1747523036': 'Obermain',
+
+  // RAV DESIGN
+  '469553987': 'RAV Design',
+  '1770621264': 'RAV Design',
+  '1770621266': 'RAV Design',
+  '1770621271': 'RAV Design',
+
+  // HUSH PUPPIES
+  '282544493': 'Hush Puppies Accessories',
+
+  // BEVERLY HILLS POLO CLUB
+  '170811257': 'Beverly Hills Polo Club',
+  '74401016': 'Beverly Hills Polo Club',
   '190669704': 'Beverly Hills Polo Club',
-  '170811257': 'JOHN LANGFORD OF LONDON',
+
+  // JOHN LANGFORD
+  '170808053': 'JOHN LANGFORD OF LONDON',
+
+  // NICOLE COLLECTION
+  '66854646': 'Nicole Collection',
 };
 
 const BRAND_ALIASES = [

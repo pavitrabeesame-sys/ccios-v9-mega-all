@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
-import { buildShopApiUrl } from "@/src/services/shopee/AuthService";
+import { buildShopApiUrl } from "@/services/shopee/AuthService";
 
 export const dynamic = "force-dynamic";
 
@@ -42,22 +42,6 @@ function cleanText(value, fallback = "") {
   }
 
   return String(value).trim();
-}
-
-function bigintOrNull(value) {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ""
-  ) {
-    return null;
-  }
-
-  try {
-    return BigInt(value);
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -206,12 +190,6 @@ export async function GET() {
             `${shopId}-${Date.now()}-${synced}`
           );
 
-        const productSku =
-          review?.item_id !== undefined &&
-          review?.item_id !== null
-            ? String(review.item_id)
-            : "";
-
         const rating =
           Number(
             review?.rating_star ??
@@ -236,15 +214,18 @@ export async function GET() {
             ? String(review.order_sn)
             : null;
 
-        const productName =
-          cleanText(
-            review?.item_name ||
-              review?.product_name ||
-              review?.model_name,
-            productSku
-              ? `Shopee Product ${productSku}`
-              : "Unknown Product"
-          );
+        const productName = 
+          review?.item_name || 
+          review?.product_name || 
+          review?.name || 
+          review?.item_brief?.item_name || 
+          'Unknown Product';
+
+        const productSku = 
+          review?.model_name || 
+          review?.item_sku || 
+          review?.model_sku || 
+          (review?.item_id ? String(review.item_id) : '');
 
         /**
          * ------------------------------------------------------
@@ -272,17 +253,6 @@ export async function GET() {
          * ------------------------------------------------------
          * UPDATE EXISTING
          * ------------------------------------------------------
-         *
-         * IMPORTANT:
-         * We update shopId/brand even for legacy records.
-         *
-         * We DO NOT reset:
-         * - aiReply
-         * - finalReply
-         * - status
-         * - approvedBy
-         * - repliedBy
-         * - repliedAt
          */
 
         if (existing) {
@@ -384,7 +354,6 @@ export async function GET() {
               shopIdBigInt,
 
             brand,
-
           },
         });
 
