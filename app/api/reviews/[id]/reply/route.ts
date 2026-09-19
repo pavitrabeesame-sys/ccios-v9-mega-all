@@ -15,6 +15,46 @@ function generateShopeeSign(
   return crypto.createHmac('sha256', partnerKey).update(baseString).digest('hex');
 }
 
+/*
+============================================================
+PATCH: Save manual edits to database without sending to Shopee
+============================================================
+*/
+export async function PATCH(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const body = await request.json();
+    const { replyText } = body;
+
+    if (!replyText) {
+      return NextResponse.json({ error: 'Reply text cannot be empty' }, { status: 400 });
+    }
+
+    const updatedReview = await prisma.review.update({
+      where: { id: params.id },
+      data: {
+        aiReply: replyText, // Updates the working AI/draft reply field
+        updatedAt: new Date(),
+      },
+    });
+
+    return NextResponse.json({ success: true, data: updatedReview });
+  } catch (error: any) {
+    console.error('Error updating review reply draft:', error);
+    return NextResponse.json(
+      { error: error.message || 'Failed to update draft' },
+      { status: 500 }
+    );
+  }
+}
+
+/*
+============================================================
+POST: Push final reply (AI or custom) directly to Shopee API
+============================================================
+*/
 export async function POST(
   request: Request,
   { params }: { params: { id: string } }
@@ -25,7 +65,7 @@ export async function POST(
 
     const review = await prisma.review.findUnique({
       where: { id: params.id },
-      include: { shopeeAccount: true }, // Ensure shopeeAccount relation is fetched if available
+      include: { shopeeAccount: true },
     });
 
     if (!review) {
@@ -43,7 +83,6 @@ export async function POST(
     const partnerKey = process.env.SHOPEE_PARTNER_KEY || '';
     const host = process.env.SHOPEE_HOST || 'https://partner.shopeemobile.com';
 
-    // Fetch account by shopId associated with the review or default account
     let shopeeAccount = review.shopeeAccount;
     if (!shopeeAccount && review.shopId) {
       shopeeAccount = await prisma.shopeeAccount.findFirst({
@@ -73,7 +112,6 @@ export async function POST(
     const cleanHost = host.replace(/\/+$/, '');
     const shopeeUrl = `${cleanHost}${apiPath}?partner_id=${partnerId}&timestamp=${timestamp}&sign=${sign}&access_token=${accessToken}&shop_id=${shopId}`;
 
-    // Target comment_id (uses review.reviewId or review.commentId)
     const commentId = Number(review.reviewId || (review as any).commentId);
 
     // 3. Call Shopee Open API
@@ -100,11 +138,12 @@ export async function POST(
       );
     }
 
-    // 4. Update Database Status
+    // 4. Update Database Status to REPLIED
     const updated = await prisma.review.update({
       where: { id: params.id },
       data: {
         finalReply: replyText,
+        aiReply: replyText,
         status: ReviewStatus.REPLIED,
         approvedBy: approvedBy || 'SYSTEM',
         repliedBy: approvedBy || 'CS Team',
