@@ -232,6 +232,7 @@ const SHOPEE_PAGE_SIZE = 50;
 // Maximum pages processed in one Vercel invocation.
 // Progress is saved after every page so the next invocation resumes.
 const SHOPEE_SYNC_BATCH_PAGES = 5;
+const SHOPEE_GLOBAL_BATCH_PAGES = 5;
 
 const LAZADA_PRODUCT_LIMIT = 50;
 const MAX_LAZADA_PRODUCT_PAGES = 20;
@@ -2239,8 +2240,10 @@ export async function POST(
       );
     }
 
-    const shopeeResults: any[] = [];
-    const lazadaResults: any[] = [];
+const shopeeResults: any[] = [];
+const lazadaResults: any[] = [];
+
+let totalShopeePagesProcessed = 0;
 
     let totalShopeeReviews = 0;
     let totalLazadaReviews = 0;
@@ -2261,6 +2264,18 @@ export async function POST(
         const account of
           shopeeAccounts
       ) {
+
+        if (
+  totalShopeePagesProcessed >=
+  SHOPEE_GLOBAL_BATCH_PAGES
+) {
+  console.log(
+    `[Smart Sync] Global Shopee batch limit reached (${SHOPEE_GLOBAL_BATCH_PAGES} pages). Stopping this invocation.`
+  );
+
+  break;
+}
+
         const shopId =
           String(
             account.shopId
@@ -2290,12 +2305,15 @@ export async function POST(
 
         try {
           const result =
-            await syncShopeeAccount(
-              account
-            );
+  await syncShopeeAccount(
+    account
+  );
 
-          totalShopeeReviews +=
-            result.synced;
+totalShopeeReviews +=
+  result.synced;
+
+totalShopeePagesProcessed +=
+  result.pages;
 
           shopeeResults.push(
             result
