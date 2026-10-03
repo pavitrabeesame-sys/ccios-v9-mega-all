@@ -228,7 +228,10 @@ SYNC SETTINGS
 */
 
 const SHOPEE_PAGE_SIZE = 50;
-const MAX_SHOPEE_PAGES = 100;
+
+// Maximum pages processed in one Vercel invocation.
+// Progress is saved after every page so the next invocation resumes.
+const SHOPEE_SYNC_BATCH_PAGES = 5;
 
 const LAZADA_PRODUCT_LIMIT = 50;
 const MAX_LAZADA_PRODUCT_PAGES = 20;
@@ -746,6 +749,7 @@ async function resolveShopeeProduct(
 }
 
 /*
+/*
 ============================================================
 SHOPEE SYNC
 ============================================================
@@ -781,7 +785,68 @@ async function syncShopeeAccount(
     account.shopName ||
     `Shopee Shop (${shopId})`;
 
+  /*
+  ============================================================
+  RESUME CHECKPOINT
+  ============================================================
+  */
+
   let cursor = '';
+  let pageNumber = 1;
+
+  /*
+   * If the previous sync completed, start a fresh incremental
+   * sync from Shopee page 1.
+   *
+   * If the previous sync was incomplete, resume using the saved
+   * Shopee cursor.
+   */
+  if (account.reviewSyncDone) {
+    cursor = '';
+    pageNumber = 1;
+  } else {
+    cursor =
+      account.reviewCursor
+        ? String(account.reviewCursor)
+        : '';
+
+    pageNumber = Math.max(
+      Number(account.nextReviewPage || 1),
+      1
+    );
+
+    /*
+     * Shopee pagination is cursor-based.
+     * A page number by itself cannot safely resume page 16.
+     *
+     * If we have page > 1 but no cursor, safely restart from
+     * page 1 rather than requesting an invalid pagination state.
+     */
+    if (
+      pageNumber > 1 &&
+      !cursor
+    ) {
+      console.warn(
+        `[Smart Sync][Shopee] ${shopId} has nextReviewPage=${pageNumber} but no saved cursor. Restarting safely from page 1.`
+      );
+
+      pageNumber = 1;
+      cursor = '';
+
+      await db.shopeeAccount.update({
+        where: {
+          id: account.id,
+        },
+
+        data: {
+          nextReviewPage: 1,
+          reviewCursor: null,
+          reviewSyncDone: false,
+        },
+      });
+    }
+  }
+
   let hasMore = true;
 
   let pages = 0;
@@ -790,17 +855,22 @@ async function syncShopeeAccount(
   let skipped = 0;
 
   let reached2026 = false;
+  let syncDone = false;
+
+  /*
+  ============================================================
+  PROCESS ONLY A SMALL BATCH PER VERCEL INVOCATION
+  ============================================================
+  */
 
   while (
     hasMore &&
     pages <
-      MAX_SHOPEE_PAGES &&
+      SHOPEE_SYNC_BATCH_PAGES &&
     !reached2026
   ) {
-    pages++;
-
     console.log(
-      `[Smart Sync][Shopee] ${shopId} ${brandInfo.name} — page ${pages}`
+      `[Smart Sync][Shopee] ${shopId} ${brandInfo.name} — page ${pageNumber} (${pages + 1}/${SHOPEE_SYNC_BATCH_PAGES})`
     );
 
     const response =
@@ -835,9 +905,45 @@ async function syncShopeeAccount(
         ? apiResponse.item_comment_list
         : [];
 
+    /*
+    ============================================================
+    NO COMMENTS = SYNC COMPLETE
+    ============================================================
+    */
+
     if (!comments.length) {
+      hasMore = false;
+      syncDone = true;
+
+      await db.shopeeAccount.update({
+        where: {
+          id: account.id,
+        },
+
+        data: {
+          nextReviewPage:
+            pageNumber,
+
+          reviewCursor:
+            null,
+
+          reviewSyncDone:
+            true,
+        },
+      });
+
+      console.log(
+        `[Smart Sync][Shopee] ${shopId} — no more comments. Sync complete.`
+      );
+
       break;
     }
+
+    /*
+    ============================================================
+    PROCESS CURRENT PAGE
+    ============================================================
+    */
 
     for (
       const comment of comments
@@ -867,6 +973,11 @@ async function syncShopeeAccount(
         continue;
       }
 
+      /*
+      * Shopee returns newest -> oldest.
+      * Once we reach a review before 2026,
+      * historical sync is complete.
+      */
       if (
         createTime <
         START_2026_SEC
@@ -875,6 +986,9 @@ async function syncShopeeAccount(
         break;
       }
 
+      /*
+      * Ignore anything outside our 2026 window.
+      */
       if (
         createTime >=
         START_2027_SEC
@@ -921,22 +1035,28 @@ async function syncShopeeAccount(
             ''
         ).trim();
 
-      const product = await resolveShopeeProduct(
-        account, // <-- Ensure account is passed here
-        itemId,
-        itemSku
-      );
+      const product =
+        await resolveShopeeProduct(
+          account,
+          itemId,
+          itemSku
+        );
 
       await db.review.upsert({
-  where: {
-    marketplace_shopId_reviewId: {
-      marketplace: 'SHOPEE',
-      shopId: BigInt(shopId),
-      reviewId: reviewIdString,
-    },
-  },
+        where: {
+          marketplace_shopId_reviewId: {
+            marketplace:
+              'SHOPEE',
 
-  update: {
+            shopId:
+              BigInt(shopId),
+
+            reviewId:
+              reviewIdString,
+          },
+        },
+
+        update: {
           rating,
 
           reviewText,
@@ -1017,28 +1137,189 @@ async function syncShopeeAccount(
       synced++;
     }
 
+    /*
+    ============================================================
+    REACHED 2026 START
+    ============================================================
+    */
+
     if (reached2026) {
-      break;
-    }
+      hasMore = false;
+      syncDone = true;
 
-    hasMore =
-      apiResponse.more === true;
+      await db.shopeeAccount.update({
+        where: {
+          id: account.id,
+        },
 
-    cursor =
-      apiResponse.next_cursor ||
-      apiResponse.nextCursor ||
-      '';
+        data: {
+          nextReviewPage:
+            pageNumber,
 
-    if (
-      hasMore &&
-      !cursor
-    ) {
-      console.warn(
-        `[Smart Sync][Shopee] more=true but no cursor returned for ${shopId}.`
+          reviewCursor:
+            null,
+
+          reviewSyncDone:
+            true,
+        },
+      });
+
+      console.log(
+        `[Smart Sync][Shopee] ${shopId} — reached pre-2026 reviews. Historical sync complete.`
       );
 
       break;
     }
+
+    /*
+    ============================================================
+    CHECK SHOPEE PAGINATION
+    ============================================================
+    */
+
+    hasMore =
+      apiResponse.more === true;
+
+    const nextCursor =
+      apiResponse.next_cursor ||
+      apiResponse.nextCursor ||
+      '';
+
+    /*
+    ============================================================
+    NO MORE PAGES
+    ============================================================
+    */
+
+    if (!hasMore) {
+      cursor = '';
+      syncDone = true;
+
+      pages++;
+
+      await db.shopeeAccount.update({
+        where: {
+          id: account.id,
+        },
+
+        data: {
+          nextReviewPage:
+            pageNumber,
+
+          reviewCursor:
+            null,
+
+          reviewSyncDone:
+            true,
+        },
+      });
+
+      console.log(
+        `[Smart Sync][Shopee] ${shopId} — last page reached. Sync complete.`
+      );
+
+      break;
+    }
+
+    /*
+    ============================================================
+    SAFETY: SHOPEE SAYS MORE BUT GIVES NO CURSOR
+    ============================================================
+    */
+
+    if (!nextCursor) {
+      console.warn(
+        `[Smart Sync][Shopee] ${shopId} — more=true but no next cursor returned. Stopping safely.`
+      );
+
+      pages++;
+
+      /*
+       * Keep the current cursor so the next invocation can retry
+       * this page rather than accidentally jumping or restarting.
+       */
+      await db.shopeeAccount.update({
+        where: {
+          id: account.id,
+        },
+
+        data: {
+          nextReviewPage:
+            pageNumber,
+
+          reviewCursor:
+            cursor || null,
+
+          reviewSyncDone:
+            false,
+        },
+      });
+
+      hasMore = false;
+      syncDone = false;
+
+      break;
+    }
+
+    /*
+    ============================================================
+    SAVE CHECKPOINT AFTER SUCCESSFUL PAGE
+    ============================================================
+    */
+
+    pages++;
+
+    cursor =
+      String(nextCursor);
+
+    pageNumber++;
+
+    syncDone = false;
+
+    await db.shopeeAccount.update({
+      where: {
+        id: account.id,
+      },
+
+      data: {
+        nextReviewPage:
+          pageNumber,
+
+        reviewCursor:
+          cursor,
+
+        reviewSyncDone:
+          false,
+      },
+    });
+
+    console.log(
+      `[Smart Sync][Shopee] ${shopId} — checkpoint saved. Next page=${pageNumber}`
+    );
+
+    /*
+    * If pages === 5, the while loop ends.
+    * The next Vercel invocation resumes using the saved cursor.
+    */
+  }
+
+  /*
+  ============================================================
+  BATCH FINISHED
+  ============================================================
+  */
+
+  if (
+    pages >=
+      SHOPEE_SYNC_BATCH_PAGES &&
+    hasMore &&
+    !reached2026
+  ) {
+    syncDone = false;
+
+    console.log(
+      `[Smart Sync][Shopee] ${shopId} — batch limit reached (${SHOPEE_SYNC_BATCH_PAGES} pages). Resume on next invocation.`
+    );
   }
 
   return {
@@ -1066,6 +1347,12 @@ async function syncShopeeAccount(
     reached2026,
 
     hasMore,
+
+    nextReviewPage:
+      pageNumber,
+
+    reviewSyncDone:
+      syncDone,
   };
 }
 
